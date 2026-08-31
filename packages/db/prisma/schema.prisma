@@ -68,3 +68,17 @@ model Task {
 
   @@index([projectId])
 }
+
+model Invite {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  tenantId  String
+  role      String   @default("MEMBER")
+  createdBy String?
+  expiresAt DateTime
+  accepted  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
