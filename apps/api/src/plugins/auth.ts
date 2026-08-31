@@ -1,12 +1,13 @@
 import fp from 'fastify-plugin';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { verifyAccess } from '../lib/jwt';
+import prisma from '@nexora/db/src';
 
 type AuthPayload = {
   userId: string;
-  tenantId: string;
-  role: string;
-  email: string;
+  tenantId?: string;
+  role?: string;
+  email?: string;
 };
 
 declare module 'fastify' {
@@ -43,14 +44,47 @@ export default fp(async (fastify) => {
       try {
         const payload = verifyAccess(token) as AuthPayload;
 
-        if (!payload.userId || !payload.tenantId || !payload.role) {
-          await reply.code(401).send({ error: 'invalid authentication' });
+        if (!payload.userId) {
+          await reply.code(401).send({
+            error: 'invalid authentication',
+          });
           return;
         }
 
-        request.auth = payload;
+        let role = payload.role;
+        let tenantId = payload.tenantId;
+
+        if (payload.tenantId) {
+          const membership = await prisma.membership.findUnique({
+            where: {
+              tenantId_userId: {
+                tenantId: payload.tenantId,
+                userId: payload.userId,
+              },
+            },
+          });
+
+          if (!membership) {
+            await reply.code(401).send({
+              error: 'membership not found',
+            });
+            return;
+          }
+
+          role = membership.role;
+          tenantId = membership.tenantId;
+        }
+
+        request.auth = {
+          userId: payload.userId,
+          tenantId,
+          role,
+          email: payload.email,
+        };
       } catch {
-        await reply.code(401).send({ error: 'invalid token' });
+        await reply.code(401).send({
+          error: 'invalid token',
+        });
       }
     }
   );
@@ -61,8 +95,10 @@ export default fp(async (fastify) => {
       async (request: FastifyRequest, reply: FastifyReply) => {
         const auth = request.auth;
 
-        if (!auth) {
-          await reply.code(401).send({ error: 'unauthenticated' });
+        if (!auth?.userId) {
+          await reply.code(401).send({
+            error: 'unauthenticated',
+          });
           return;
         }
 
@@ -74,10 +110,12 @@ export default fp(async (fastify) => {
         };
 
         if (
-          (order[auth.role] || 0) <
+          (order[auth.role || ''] || 0) <
           (order[requiredRole] || 0)
         ) {
-          await reply.code(403).send({ error: 'forbidden' });
+          await reply.code(403).send({
+            error: 'forbidden',
+          });
         }
       }
   );
