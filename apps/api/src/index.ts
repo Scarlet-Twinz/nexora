@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import authPlugin from './plugins/auth';
 import authRoutes from './routes/auth';
+import projectRoutes from './routes/projects';
+import taskRoutes from './routes/tasks';
 
 const fastify = Fastify({ logger: true });
 
@@ -13,6 +15,12 @@ fastify.register(authPlugin);
 
 // Register auth routes
 fastify.register(authRoutes);
+
+// Register project routes
+fastify.register(projectRoutes);
+
+// Register task routes
+fastify.register(taskRoutes);
 
 // Health
 fastify.get('/health', async () => ({
