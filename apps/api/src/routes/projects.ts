@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import prisma from '@nexora/db/src';
 import { setTenantSession } from '../db';
+import { z } from 'zod';
 
 type AuthContext = {
   userId: string;
@@ -9,6 +10,16 @@ type AuthContext = {
   email: string;
 };
 
+const CreateProjectSchema = z.object({
+  name: z.string().trim().min(1, 'name is required'),
+  description: z.string().nullable().optional(),
+});
+
+const UpdateProjectSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  description: z.string().nullable().optional(),
+});
+
 export default async function projectRoutes(fastify: FastifyInstance) {
   const setTenant = async (request: any) => {
     const auth = request.auth as AuthContext;
@@ -16,8 +27,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     try {
       await setTenantSession(auth.tenantId);
     } catch {
-      // Best effort for now.
-      // Prisma queries still explicitly scope by tenantId.
+      // Prisma queries explicitly scope by tenantId.
     }
   };
 
@@ -33,18 +43,20 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
-      const body = request.body as any;
 
-      if (!body?.name) {
+      const parsed = CreateProjectSchema.safeParse(request.body);
+
+      if (!parsed.success) {
         return reply.code(400).send({
-          error: 'name required',
+          error: 'invalid request body',
+          details: parsed.error.flatten(),
         });
       }
 
       const project = await prisma.project.create({
         data: {
-          name: body.name,
-          description: body.description || null,
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
           tenantId: auth.tenantId,
           createdBy: auth.userId,
         },
@@ -54,7 +66,7 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // List projects
+  // List projects — tenant scoped + pagination
   fastify.get(
     '/projects',
     {
@@ -65,6 +77,13 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+      const query = request.query as {
+        page?: string;
+        per?: string;
+      };
+
+      const page = Math.max(1, Number(query.page || 1));
+      const per = Math.min(50, Math.max(1, Number(query.per || 10)));
 
       const projects = await prisma.project.findMany({
         where: {
@@ -73,13 +92,19 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         orderBy: {
           createdAt: 'desc',
         },
+        skip: (page - 1) * per,
+        take: per,
       });
 
-      return reply.send(projects);
+      return reply.send({
+        items: projects,
+        page,
+        per,
+      });
     }
   );
 
-  // Get single project
+  // Get single project — tenant scoped
   fastify.get(
     '/projects/:id',
     {
@@ -122,7 +147,15 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
       const { id } = request.params as { id: string };
-      const body = request.body as any;
+
+      const parsed = UpdateProjectSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: 'invalid request body',
+          details: parsed.error.flatten(),
+        });
+      }
 
       const updated = await prisma.project.updateMany({
         where: {
@@ -130,8 +163,12 @@ export default async function projectRoutes(fastify: FastifyInstance) {
           tenantId: auth.tenantId,
         },
         data: {
-          name: body?.name,
-          description: body?.description,
+          ...(parsed.data.name !== undefined
+            ? { name: parsed.data.name }
+            : {}),
+          ...(parsed.data.description !== undefined
+            ? { description: parsed.data.description }
+            : {}),
           updatedAt: new Date(),
         },
       });
@@ -142,8 +179,11 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const project = await prisma.project.findUnique({
-        where: { id },
+      const project = await prisma.project.findFirst({
+        where: {
+          id,
+          tenantId: auth.tenantId,
+        },
       });
 
       return reply.send(project);

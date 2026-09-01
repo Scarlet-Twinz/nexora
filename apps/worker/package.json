@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "build": "tsc --noEmit",
     "dev": "tsx watch src/worker.ts",
     "start": "tsx src/worker.ts"
   },
@@ -13,6 +14,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.20.0",
     "typescript": "^5.0.0"
   }

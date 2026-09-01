@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import prisma from '@nexora/db/src';
 import { setTenantSession } from '../db';
+import { z } from 'zod';
 
 type AuthContext = {
   userId: string;
@@ -9,6 +10,19 @@ type AuthContext = {
   email: string;
 };
 
+const CreateTaskSchema = z.object({
+  title: z.string().trim().min(1, 'title is required'),
+  description: z.string().nullable().optional(),
+  assigneeId: z.string().optional(),
+});
+
+const UpdateTaskSchema = z.object({
+  title: z.string().trim().min(1).optional(),
+  description: z.string().nullable().optional(),
+  status: z.string().trim().min(1).optional(),
+  assigneeId: z.string().nullable().optional(),
+});
+
 export default async function taskRoutes(fastify: FastifyInstance) {
   const setTenant = async (request: any) => {
     const auth = request.auth as AuthContext;
@@ -16,8 +30,7 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     try {
       await setTenantSession(auth.tenantId);
     } catch {
-      // Best effort for now.
-      // Prisma queries still explicitly scope by tenantId.
+      // Prisma queries explicitly scope through the tenant's project.
     }
   };
 
@@ -33,18 +46,21 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+
       const { projectId } = request.params as {
         projectId: string;
       };
-      const { title, description, assigneeId } =
-        request.body as any;
 
-      if (!title) {
+      const parsed = CreateTaskSchema.safeParse(request.body);
+
+      if (!parsed.success) {
         return reply.code(400).send({
-          error: 'title required',
+          error: 'invalid request body',
+          details: parsed.error.flatten(),
         });
       }
 
+      // Verify the project belongs to the authenticated tenant.
       const project = await prisma.project.findFirst({
         where: {
           id: projectId,
@@ -58,12 +74,31 @@ export default async function taskRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // If an assignee is supplied, make sure that user belongs
+      // to the same tenant.
+      if (parsed.data.assigneeId) {
+        const membership = await prisma.membership.findFirst({
+          where: {
+            tenantId: auth.tenantId,
+            userId: parsed.data.assigneeId,
+          },
+        });
+
+        if (!membership) {
+          return reply.code(400).send({
+            error: 'assignee is not a member of this tenant',
+          });
+        }
+      }
+
       const task = await prisma.task.create({
         data: {
-          title,
-          description: description || null,
+          title: parsed.data.title,
+          description: parsed.data.description ?? null,
           projectId,
-          ...(assigneeId ? { assigneeId } : {}),
+          ...(parsed.data.assigneeId
+            ? { assigneeId: parsed.data.assigneeId }
+            : {}),
         },
       });
 
@@ -71,7 +106,7 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // List tasks
+  // List tasks — tenant scoped + pagination
   fastify.get(
     '/projects/:projectId/tasks',
     {
@@ -82,10 +117,20 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+
       const { projectId } = request.params as {
         projectId: string;
       };
 
+      const query = request.query as {
+        page?: string;
+        per?: string;
+      };
+
+      const page = Math.max(1, Number(query.page || 1));
+      const per = Math.min(50, Math.max(1, Number(query.per || 10)));
+
+      // First verify the project belongs to this tenant.
       const project = await prisma.project.findFirst({
         where: {
           id: projectId,
@@ -100,11 +145,21 @@ export default async function taskRoutes(fastify: FastifyInstance) {
       }
 
       const tasks = await prisma.task.findMany({
-        where: { projectId },
-        orderBy: { createdAt: 'asc' },
+        where: {
+          projectId,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+        skip: (page - 1) * per,
+        take: per,
       });
 
-      return reply.send(tasks);
+      return reply.send({
+        items: tasks,
+        page,
+        per,
+      });
     }
   );
 
@@ -120,12 +175,22 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+
       const { projectId, taskId } = request.params as {
         projectId: string;
         taskId: string;
       };
-      const body = request.body as any;
 
+      const parsed = UpdateTaskSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: 'invalid request body',
+          details: parsed.error.flatten(),
+        });
+      }
+
+      // Verify project belongs to tenant.
       const project = await prisma.project.findFirst({
         where: {
           id: projectId,
@@ -139,21 +204,41 @@ export default async function taskRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // If changing assignee, verify the user belongs to this tenant.
+      if (parsed.data.assigneeId) {
+        const membership = await prisma.membership.findFirst({
+          where: {
+            tenantId: auth.tenantId,
+            userId: parsed.data.assigneeId,
+          },
+        });
+
+        if (!membership) {
+          return reply.code(400).send({
+            error: 'assignee is not a member of this tenant',
+          });
+        }
+      }
+
       const updated = await prisma.task.updateMany({
         where: {
           id: taskId,
           projectId,
         },
         data: {
-          ...(body?.title !== undefined
-            ? { title: body.title }
+          ...(parsed.data.title !== undefined
+            ? { title: parsed.data.title }
             : {}),
-          ...(body?.description !== undefined
-            ? { description: body.description }
+          ...(parsed.data.description !== undefined
+            ? { description: parsed.data.description }
             : {}),
-          ...(body?.status !== undefined
-            ? { status: body.status }
+          ...(parsed.data.status !== undefined
+            ? { status: parsed.data.status }
             : {}),
+          ...(parsed.data.assigneeId !== undefined
+            ? { assigneeId: parsed.data.assigneeId }
+            : {}),
+          updatedAt: new Date(),
         },
       });
 
@@ -163,8 +248,11 @@ export default async function taskRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const task = await prisma.task.findUnique({
-        where: { id: taskId },
+      const task = await prisma.task.findFirst({
+        where: {
+          id: taskId,
+          projectId,
+        },
       });
 
       return reply.send(task);
@@ -183,11 +271,13 @@ export default async function taskRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+
       const { projectId, taskId } = request.params as {
         projectId: string;
         taskId: string;
       };
 
+      // Verify project belongs to tenant.
       const project = await prisma.project.findFirst({
         where: {
           id: projectId,

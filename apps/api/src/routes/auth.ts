@@ -8,12 +8,16 @@ import {
 } from '../lib/jwt';
 
 export default async function authRoutes(fastify: FastifyInstance) {
-  // Signup: creates Tenant, User, Membership (OWNER)
+  // Signup
+  // Normal signup -> creates Tenant + User + OWNER membership.
+  // Invite signup -> creates User + membership in the invited tenant.
   fastify.post('/auth/signup', async (request, reply) => {
     const body = request.body as any;
 
-    const email = (body?.email || '').toLowerCase();
+    const email = (body?.email || '').toLowerCase().trim();
     const password = body?.password || '';
+    const inviteToken = body?.inviteToken || '';
+
     const tenantName =
       body?.tenantName || `${email.split('@')[0]}'s Org`;
 
@@ -33,6 +37,105 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     const hashed = await bcrypt.hash(password, 10);
 
+    /*
+     * INVITED SIGNUP
+     *
+     * If an inviteToken is supplied, the user joins the
+     * existing tenant instead of creating a new tenant.
+     */
+    if (inviteToken) {
+      try {
+        const result = await prisma.$transaction(async (tx: any) => {
+          const invite = await tx.invite.findUnique({
+            where: { token: inviteToken },
+          });
+
+          if (!invite) {
+            throw new Error('INVITE_NOT_FOUND');
+          }
+
+          if (invite.accepted) {
+            throw new Error('INVITE_ACCEPTED');
+          }
+
+          if (invite.expiresAt < new Date()) {
+            throw new Error('INVITE_EXPIRED');
+          }
+
+          if (invite.email.toLowerCase() !== email) {
+            throw new Error('INVITE_EMAIL_MISMATCH');
+          }
+
+          const user = await tx.user.create({
+            data: {
+              email,
+              password: hashed,
+              name: body?.name || null,
+            },
+          });
+
+          await tx.membership.create({
+            data: {
+              userId: user.id,
+              tenantId: invite.tenantId,
+              role: invite.role,
+            },
+          });
+
+          await tx.invite.update({
+            where: { id: invite.id },
+            data: {
+              accepted: true,
+            },
+          });
+
+          return {
+            userId: user.id,
+            tenantId: invite.tenantId,
+            role: invite.role,
+          };
+        });
+
+        return reply.code(201).send({
+          userId: result.userId,
+          tenantId: result.tenantId,
+          role: result.role,
+          joined: true,
+        });
+      } catch (error: any) {
+        switch (error?.message) {
+          case 'INVITE_NOT_FOUND':
+            return reply.code(404).send({
+              error: 'invalid invite token',
+            });
+
+          case 'INVITE_ACCEPTED':
+            return reply.code(409).send({
+              error: 'invite already accepted',
+            });
+
+          case 'INVITE_EXPIRED':
+            return reply.code(410).send({
+              error: 'invite expired',
+            });
+
+          case 'INVITE_EMAIL_MISMATCH':
+            return reply.code(403).send({
+              error: 'invite email does not match signup email',
+            });
+
+          default:
+            throw error;
+        }
+      }
+    }
+
+    /*
+     * NORMAL SIGNUP
+     *
+     * No invite token -> create a new tenant and make
+     * the new user its OWNER.
+     */
     const slug = tenantName
       .toLowerCase()
       .replace(/\s+/g, '-');
