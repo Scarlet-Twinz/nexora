@@ -1,6 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import prisma from '@nexora/db/src';
-import { setTenantSession } from '../db';
+import prisma, { withTenant } from '../db';
 import { z } from 'zod';
 
 type AuthContext = {
@@ -20,31 +19,24 @@ const UpdateProjectSchema = z.object({
   description: z.string().nullable().optional(),
 });
 
-export default async function projectRoutes(fastify: FastifyInstance) {
-  const setTenant = async (request: any) => {
-    const auth = request.auth as AuthContext;
-
-    try {
-      await setTenantSession(auth.tenantId);
-    } catch {
-      // Prisma queries explicitly scope by tenantId.
-    }
-  };
-
+export default async function projectRoutes(
+  fastify: FastifyInstance
+) {
   // Create project — MEMBER+
   fastify.post(
     '/projects',
     {
       preHandler: [
         fastify.authenticate,
-        setTenant,
         fastify.requireRole('MEMBER'),
       ],
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
 
-      const parsed = CreateProjectSchema.safeParse(request.body);
+      const parsed = CreateProjectSchema.safeParse(
+        request.body
+      );
 
       if (!parsed.success) {
         return reply.code(400).send({
@@ -53,14 +45,20 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const project = await prisma.project.create({
-        data: {
-          name: parsed.data.name,
-          description: parsed.data.description ?? null,
-          tenantId: auth.tenantId,
-          createdBy: auth.userId,
-        },
-      });
+      const project = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          return tx.project.create({
+            data: {
+              name: parsed.data.name,
+              description:
+                parsed.data.description ?? null,
+              tenantId: auth.tenantId,
+              createdBy: auth.userId,
+            },
+          });
+        }
+      );
 
       return reply.code(201).send(project);
     }
@@ -72,29 +70,41 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     {
       preHandler: [
         fastify.authenticate,
-        setTenant,
       ],
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
+
       const query = request.query as {
         page?: string;
         per?: string;
       };
 
-      const page = Math.max(1, Number(query.page || 1));
-      const per = Math.min(50, Math.max(1, Number(query.per || 10)));
+      const page = Math.max(
+        1,
+        Number(query.page || 1)
+      );
 
-      const projects = await prisma.project.findMany({
-        where: {
-          tenantId: auth.tenantId,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        skip: (page - 1) * per,
-        take: per,
-      });
+      const per = Math.min(
+        50,
+        Math.max(1, Number(query.per || 10))
+      );
+
+      const projects = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          return tx.project.findMany({
+            where: {
+              tenantId: auth.tenantId,
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+            skip: (page - 1) * per,
+            take: per,
+          });
+        }
+      );
 
       return reply.send({
         items: projects,
@@ -110,19 +120,26 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     {
       preHandler: [
         fastify.authenticate,
-        setTenant,
       ],
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
-      const { id } = request.params as { id: string };
 
-      const project = await prisma.project.findFirst({
-        where: {
-          id,
-          tenantId: auth.tenantId,
-        },
-      });
+      const { id } = request.params as {
+        id: string;
+      };
+
+      const project = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          return tx.project.findFirst({
+            where: {
+              id,
+              tenantId: auth.tenantId,
+            },
+          });
+        }
+      );
 
       if (!project) {
         return reply.code(404).send({
@@ -140,15 +157,19 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     {
       preHandler: [
         fastify.authenticate,
-        setTenant,
         fastify.requireRole('ADMIN'),
       ],
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
-      const { id } = request.params as { id: string };
 
-      const parsed = UpdateProjectSchema.safeParse(request.body);
+      const { id } = request.params as {
+        id: string;
+      };
+
+      const parsed = UpdateProjectSchema.safeParse(
+        request.body
+      );
 
       if (!parsed.success) {
         return reply.code(400).send({
@@ -157,36 +178,52 @@ export default async function projectRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const updated = await prisma.project.updateMany({
-        where: {
-          id,
-          tenantId: auth.tenantId,
-        },
-        data: {
-          ...(parsed.data.name !== undefined
-            ? { name: parsed.data.name }
-            : {}),
-          ...(parsed.data.description !== undefined
-            ? { description: parsed.data.description }
-            : {}),
-          updatedAt: new Date(),
-        },
-      });
+      const result = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          const updated =
+            await tx.project.updateMany({
+              where: {
+                id,
+                tenantId: auth.tenantId,
+              },
+              data: {
+                ...(parsed.data.name !== undefined
+                  ? {
+                      name: parsed.data.name,
+                    }
+                  : {}),
+                ...(parsed.data.description !==
+                undefined
+                  ? {
+                      description:
+                        parsed.data.description,
+                    }
+                  : {}),
+                updatedAt: new Date(),
+              },
+            });
 
-      if (updated.count === 0) {
+          if (updated.count === 0) {
+            return null;
+          }
+
+          return tx.project.findFirst({
+            where: {
+              id,
+              tenantId: auth.tenantId,
+            },
+          });
+        }
+      );
+
+      if (!result) {
         return reply.code(404).send({
           error: 'not found',
         });
       }
 
-      const project = await prisma.project.findFirst({
-        where: {
-          id,
-          tenantId: auth.tenantId,
-        },
-      });
-
-      return reply.send(project);
+      return reply.send(result);
     }
   );
 
@@ -196,20 +233,27 @@ export default async function projectRoutes(fastify: FastifyInstance) {
     {
       preHandler: [
         fastify.authenticate,
-        setTenant,
         fastify.requireRole('OWNER'),
       ],
     },
     async (request: any, reply) => {
       const auth = request.auth as AuthContext;
-      const { id } = request.params as { id: string };
 
-      const deleted = await prisma.project.deleteMany({
-        where: {
-          id,
-          tenantId: auth.tenantId,
-        },
-      });
+      const { id } = request.params as {
+        id: string;
+      };
+
+      const deleted = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          return tx.project.deleteMany({
+            where: {
+              id,
+              tenantId: auth.tenantId,
+            },
+          });
+        }
+      );
 
       if (deleted.count === 0) {
         return reply.code(404).send({

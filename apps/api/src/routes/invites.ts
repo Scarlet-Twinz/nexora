@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify';
-import prisma from '@nexora/db/src';
 import { nanoid } from 'nanoid';
-import { setTenantSession } from '../db';
 import { Queue } from 'bullmq';
+import prisma from '@nexora/db/src';
+import { withTenant } from '../db';
 
 const redisUrl = new URL(
   process.env.REDIS_URL || 'redis://127.0.0.1:6379'
@@ -12,35 +12,21 @@ const connection = {
   host: redisUrl.hostname,
   port: Number(redisUrl.port || 6379),
   ...(redisUrl.password
-    ? { password: decodeURIComponent(redisUrl.password) }
+    ? {
+        password: decodeURIComponent(
+          redisUrl.password
+        ),
+      }
     : {}),
 };
 
-const queue = new Queue('default', { connection });
+const queue = new Queue('default', {
+  connection,
+});
 
 export default async function inviteRoutes(
   fastify: FastifyInstance
 ) {
-  const requireAuthAndTenant = async (
-    request: any,
-    reply: any
-  ) => {
-    const auth = request.auth;
-
-    if (!auth?.userId || !auth?.tenantId) {
-      await reply
-        .code(401)
-        .send({ error: 'unauthenticated' });
-      return;
-    }
-
-    try {
-      await setTenantSession(auth.tenantId);
-    } catch {
-      // Tenant is still enforced by Prisma queries.
-    }
-  };
-
   // Create invite — ADMIN+
   fastify.post(
     '/invites',
@@ -51,52 +37,77 @@ export default async function inviteRoutes(
       ],
     },
     async (request: any, reply) => {
+      const auth = request.auth;
+
       const body = request.body as any;
 
-      const email = (body?.email || '').toLowerCase();
+      const email = (body?.email || '')
+        .trim()
+        .toLowerCase();
+
       const role = body?.role || 'MEMBER';
 
       if (!email) {
-        return reply
-          .code(400)
-          .send({ error: 'email required' });
-      }
-
-      const existingMembership =
-        await prisma.membership.findFirst({
-          where: {
-            tenantId: request.auth.tenantId,
-            user: {
-              email,
-            },
-          },
+        return reply.code(400).send({
+          error: 'email required',
         });
-
-      if (existingMembership) {
-        return reply
-          .code(409)
-          .send({
-            error: 'user is already a member',
-          });
       }
 
-      const token = nanoid(32);
+      const result = await withTenant(
+        auth.tenantId,
+        async (tx) => {
+          const existingMembership =
+            await tx.membership.findFirst({
+              where: {
+                tenantId: auth.tenantId,
+                user: {
+                  email,
+                },
+              },
+            });
 
-      const expiresAt = new Date(
-        Date.now() +
-          1000 * 60 * 60 * 24 * 7
+          if (existingMembership) {
+            return {
+              type: 'already_member' as const,
+            };
+          }
+
+          const token = nanoid(32);
+
+          const expiresAt = new Date(
+            Date.now() +
+              1000 * 60 * 60 * 24 * 7
+          );
+
+          const invite =
+            await tx.invite.create({
+              data: {
+                token,
+                email,
+                tenantId: auth.tenantId,
+                role,
+                createdBy: auth.userId,
+                expiresAt,
+              },
+            });
+
+          return {
+            type: 'created' as const,
+            invite,
+          };
+        }
       );
 
-      const invite = await prisma.invite.create({
-        data: {
-          token,
-          email,
-          tenantId: request.auth.tenantId,
-          role,
-          createdBy: request.auth.userId,
-          expiresAt,
-        },
-      });
+      if (
+        result.type ===
+        'already_member'
+      ) {
+        return reply.code(409).send({
+          error: 'user is already a member',
+        });
+      }
+
+      const invite = result.invite;
 
       await queue.add(
         'send-invite',
@@ -122,91 +133,170 @@ export default async function inviteRoutes(
     }
   );
 
-  // Accept invite
+  // Accept invite — public
+  //
+  // The invite token is used only to discover the tenant.
+  // Once the tenant is known, all protected operations use
+  // the transaction-local tenant context.
   fastify.post(
     '/invites/accept',
-    async (request, reply) => {
+    async (request: any, reply) => {
       const { token } = request.body as {
         token?: string;
       };
 
       if (!token) {
-        return reply
-          .code(400)
-          .send({ error: 'token required' });
+        return reply.code(400).send({
+          error: 'token required',
+        });
       }
 
-      const invite = await prisma.invite.findUnique({
-        where: { token },
-      });
+      const result =
+        await prisma.$transaction(
+          async (tx: any) => {
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.invite_token',
+                ${token},
+                true
+              )
+            `;
 
-      if (!invite) {
-        return reply
-          .code(404)
-          .send({ error: 'invalid token' });
+            const invite =
+              await tx.invite.findUnique({
+                where: {
+                  token,
+                },
+              });
+
+            if (!invite) {
+              return {
+                type: 'invalid' as const,
+              };
+            }
+
+            if (
+              invite.expiresAt <
+              new Date()
+            ) {
+              return {
+                type: 'expired' as const,
+              };
+            }
+
+            if (invite.accepted) {
+              return {
+                type: 'accepted' as const,
+              };
+            }
+
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.tenant_id',
+                ${invite.tenantId},
+                true
+              )
+            `;
+
+            const user =
+              await tx.user.findUnique({
+                where: {
+                  email: invite.email,
+                },
+              });
+
+            if (!user) {
+              return {
+                type: 'signup' as const,
+                email: invite.email,
+                token: invite.token,
+              };
+            }
+
+            const existingMembership =
+              await tx.membership.findUnique({
+                where: {
+                  tenantId_userId: {
+                    tenantId:
+                      invite.tenantId,
+                    userId: user.id,
+                  },
+                },
+              });
+
+            if (existingMembership) {
+              await tx.invite.update({
+                where: {
+                  id: invite.id,
+                },
+                data: {
+                  accepted: true,
+                },
+              });
+
+              return {
+                type: 'already_member' as const,
+              };
+            }
+
+            await tx.membership.create({
+              data: {
+                userId: user.id,
+                tenantId:
+                  invite.tenantId,
+                role: invite.role,
+              },
+            });
+
+            await tx.invite.update({
+              where: {
+                id: invite.id,
+              },
+              data: {
+                accepted: true,
+              },
+            });
+
+            return {
+              type: 'joined' as const,
+            };
+          }
+        );
+
+      if (result.type === 'invalid') {
+        return reply.code(404).send({
+          error: 'invalid token',
+        });
       }
 
-      if (invite.expiresAt < new Date()) {
-        return reply
-          .code(410)
-          .send({ error: 'invite expired' });
+      if (result.type === 'expired') {
+        return reply.code(410).send({
+          error: 'invite expired',
+        });
       }
 
-      if (invite.accepted) {
-        return reply
-          .code(409)
-          .send({
-            error: 'invite already accepted',
-          });
+      if (result.type === 'accepted') {
+        return reply.code(409).send({
+          error: 'invite already accepted',
+        });
       }
 
-      const user = await prisma.user.findUnique({
-        where: {
-          email: invite.email,
-        },
-      });
-
-      if (!user) {
+      if (result.type === 'signup') {
         return reply.send({
           action: 'signup',
-          email: invite.email,
-          token: invite.token,
+          email: result.email,
+          token: result.token,
         });
       }
 
-      const existingMembership =
-        await prisma.membership.findUnique({
-          where: {
-            tenantId_userId: {
-              tenantId: invite.tenantId,
-              userId: user.id,
-            },
-          },
-        });
-
-      if (existingMembership) {
-        await prisma.invite.update({
-          where: { id: invite.id },
-          data: { accepted: true },
-        });
-
+      if (
+        result.type ===
+        'already_member'
+      ) {
         return reply.send({
           action: 'already_member',
         });
       }
-
-      await prisma.membership.create({
-        data: {
-          userId: user.id,
-          tenantId: invite.tenantId,
-          role: invite.role,
-        },
-      });
-
-      await prisma.invite.update({
-        where: { id: invite.id },
-        data: { accepted: true },
-      });
 
       return reply.send({
         action: 'joined',
