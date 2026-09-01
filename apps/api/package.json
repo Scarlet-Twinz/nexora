@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.3.0",
     "@nexora/db": "workspace:*",
     "bcryptjs": "^3.0.2",
     "bullmq": "^5.81.4",

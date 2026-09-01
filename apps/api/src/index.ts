@@ -1,8 +1,8 @@
-import dotenv from 'dotenv';
+﻿import dotenv from 'dotenv';
 
 dotenv.config({
   path: '../../.env',
-   override: true,
+  override: true,
 });
 
 console.log(
@@ -12,33 +12,37 @@ console.log(
 
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
+import fastifyCors from '@fastify/cors';
+
 import authPlugin from './plugins/auth';
 import authRoutes from './routes/auth';
 import projectRoutes from './routes/projects';
 import taskRoutes from './routes/tasks';
 import inviteRoutes from './routes/invites';
 import stripeRoutes from './routes/stripe';
+import healthJobs from './routes/health-jobs';
 
 const fastify = Fastify({ logger: true });
 
-// Register cookie plugin
+// CORS
+fastify.register(fastifyCors, {
+  origin: 'http://localhost:3000',
+  credentials: true,
+});
+
+// Cookies
 fastify.register(fastifyCookie);
 
-// Register auth plugin
+// Auth
 fastify.register(authPlugin);
 
-// Register auth routes
+// Routes
 fastify.register(authRoutes);
-
-// Register project routes
 fastify.register(projectRoutes);
-
-// Register task routes
 fastify.register(taskRoutes);
-
 fastify.register(inviteRoutes);
-
 fastify.register(stripeRoutes);
+fastify.register(healthJobs);
 
 // Health
 fastify.get('/health', async () => ({

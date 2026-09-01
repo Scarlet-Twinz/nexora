@@ -6,3 +6,7 @@ build
 .next
 .vscode
 .DS_Store
+
+.env.test.local
+
+test-results/
