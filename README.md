@@ -585,17 +585,6 @@ Git Push / Pull Request
           └── Web build
 ```
 
----
-
-# Deployment
-
-Nexora has been deployed and is available as a live application.
-
-**Live URL:** Add your deployed URL here.
-
-The application is structured for containerized deployment with separate application, database, and background-worker responsibilities.
-
----
 
 # What I Implemented
 
