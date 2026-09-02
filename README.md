@@ -1,4 +1,4 @@
-# Nexora
+# Nexora saas platform
 
 **Multi-Tenant Project Management SaaS**
 
