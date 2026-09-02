@@ -8,25 +8,26 @@ datasource db {
 }
 
 model Tenant {
-  id           String       @id @default(cuid())
-  name         String
-  slug         String       @unique
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  memberships  Membership[]
-  projects     Project[]
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  memberships   Membership[]
+  projects      Project[]
+  subscriptions Subscription[]
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  password     String
-  name         String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  refreshTokenVersion Int @default(0)
-  memberships  Membership[]
-  projects     Project[]
+  id                  String       @id @default(cuid())
+  email               String       @unique
+  password            String
+  name                String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  refreshTokenVersion Int          @default(0)
+  memberships         Membership[]
+  projects            Project[]
 }
 
 model Membership {
@@ -102,9 +103,9 @@ model AuditLog {
   id        String   @id @default(cuid())
   tenantId  String
   userId    String?
-  action    String
-  meta      Json?
-  createdAt DateTime @default(now())
+  action     String
+  meta       Json?
+  createdAt  DateTime @default(now())
 }
 
 model ProcessedWebhook {
