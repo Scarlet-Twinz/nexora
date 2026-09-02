@@ -24,6 +24,7 @@ model User {
   name         String?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  refreshTokenVersion Int @default(0)
   memberships  Membership[]
   projects     Project[]
 }
@@ -81,4 +82,34 @@ model Invite {
   createdAt DateTime @default(now())
 
   @@index([tenantId])
+}
+
+model Subscription {
+  id                     String   @id @default(cuid())
+  tenant                 Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId               String   @unique
+  stripeCustomerId       String
+  stripeSubscriptionId   String?
+  priceId                String?
+  status                 String
+  currentPeriodStart     Int?
+  currentPeriodEnd       Int?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String?
+  action    String
+  meta      Json?
+  createdAt DateTime @default(now())
+}
+
+model ProcessedWebhook {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  source    String?
+  createdAt DateTime @default(now())
 }
