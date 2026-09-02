@@ -1,370 +1,247 @@
-# Nexora saas platform
+# Nexora
 
 **Multi-Tenant Project Management SaaS**
 
-Nexora is a full-stack project management platform built for teams to organize projects, manage tasks, collaborate across workspaces, handle team invitations, and manage subscription billing.
+Nexora is a full-stack project management platform for teams to organize projects, manage tasks, collaborate across workspaces, handle invitations, control access, and manage subscription billing.
 
-The project was built with a focus on **multi-tenancy, security, background processing, automated testing, and production-oriented architecture** rather than a basic CRUD implementation.
+The project focuses on **multi-tenancy, security, background processing, automated testing, and production-oriented architecture** rather than a basic CRUD implementation.
 
-**GitHub:** `https://github.com/Scarlet-Twinz/nexora`
+**GitHub:** https://github.com/Scarlet-Twinz/nexora
 
 ---
 
 ## Overview
 
-Nexora provides teams with an isolated workspace where they can:
+Nexora provides isolated workspaces where users can:
 
-* Create and manage projects
-* Create and manage tasks
-* Organize work across multiple tenants
-* Invite team members
-* Control access using roles
-* Authenticate securely with JWT
-* Manage Pro subscriptions through Stripe
-* Process background jobs using Redis and BullMQ
-* Protect tenant data with PostgreSQL Row-Level Security
-* Run automated end-to-end tests with Playwright
+- Create and manage projects
+- Create and manage tasks
+- Invite team members
+- Control access using roles
+- Authenticate with JWT
+- Manage Pro subscriptions through Stripe
+- Process background jobs with Redis and BullMQ
+- Protect tenant data with PostgreSQL Row-Level Security
+- Run browser-level tests with Playwright
 
-The application is structured as a **pnpm monorepo** with separate frontend, API, worker, and database packages.
-
----
+The application is structured as a **pnpm monorepo** with separate frontend, API, worker, and database responsibilities.
 
 ## Features
 
-### 🔐 Authentication & Authorization
+### Authentication & Authorization
 
-* User registration and login
-* JWT-based authentication
-* Refresh-token cookie support
-* Protected API routes
-* Role-based access control
-* Workspace-level authorization
-* Secure password hashing
+- User registration and login
+- JWT authentication
+- Refresh-token cookie support
+- Protected API routes
+- Role-based access control
+- Workspace-level authorization
+- Secure password hashing
 
-### 🏢 Multi-Tenant Architecture
+### Multi-Tenancy
 
-Nexora is designed around workspace isolation.
+Each workspace represents a tenant. Users belong to tenants through memberships, and tenant-aware operations restrict access to workspace-owned resources.
 
-Each workspace represents a tenant, and users belong to tenants through memberships.
+### PostgreSQL Row-Level Security
 
-Tenant-aware operations ensure that users only access resources belonging to their workspace.
+Nexora adds PostgreSQL RLS as a database-level security boundary alongside application authorization. Tenant context is established inside database transactions and RLS policies restrict tenant-owned records.
 
-### 🛡️ PostgreSQL Row-Level Security
+### Projects & Tasks
 
-Nexora implements PostgreSQL Row-Level Security (RLS) for tenant isolation.
+Users can create, view, update, and delete projects and tasks while maintaining workspace ownership.
 
-The API establishes the current tenant inside a database transaction using a transaction-local PostgreSQL setting:
+### Team Invitations
 
-```sql
-set_config('app.tenant_id', ..., true)
-```
+Workspace members with appropriate permissions can invite users using expiring invitation tokens and role assignment.
 
-RLS policies then restrict access to tenant-owned records.
+### Stripe Billing
 
-Protected resources include:
+The billing flow supports Pro subscription checkout through Stripe Checkout. Secret credentials remain server-side.
 
-* Tenants
-* Memberships
-* Projects
-* Tasks
-* Invitations
+### Background Jobs
 
-This adds a database-level security boundary in addition to application-level authorization.
-
-### 📁 Projects
-
-Users can:
-
-* Create projects
-* View projects
-* View individual projects
-* Update projects
-* Delete projects
-
-Projects are automatically associated with the authenticated user's workspace.
-
-### ✅ Tasks
-
-Users can:
-
-* Create tasks
-* View project tasks
-* Update tasks
-* Delete tasks
-* Track task status
-
-Tasks inherit tenant ownership through their associated project.
-
-### 👥 Team Invitations
-
-Workspace members with the appropriate permissions can invite users to their workspace.
-
-The invitation system supports:
-
-* Invitation tokens
-* Email-based invitations
-* Expiration
-* Role assignment
-* Invitation acceptance
-* Existing-member detection
-* Signup through invitation links
-
-### 💳 Stripe Billing
-
-Nexora integrates with Stripe for subscription billing.
-
-The billing flow supports:
-
-* Pro subscription checkout
-* Stripe Checkout
-* Subscription-based plans
-* Sandbox/test billing during development
-
-The Stripe integration is designed so that secret credentials remain server-side.
-
-### ⚙️ Background Jobs
-
-Nexora uses **Redis + BullMQ** for asynchronous processing.
-
-Architecture:
+Redis and BullMQ handle asynchronous processing through a dedicated worker:
 
 ```text
-API
- │
- ▼
-Redis
- │
- ▼
-BullMQ Queue
- │
- ▼
-Worker
+API → Redis → BullMQ → Worker
 ```
 
-This keeps background work separate from normal API request handling.
+### End-to-End Testing
 
-### 🧪 End-to-End Testing
+Playwright provides browser-level coverage for core application flows including authentication, projects, and tasks.
 
-Playwright is used for browser-level testing.
+### Continuous Integration
 
-Current E2E coverage includes:
-
-* Authentication
-* Dashboard/project creation
-* Task creation
-
-Example:
-
-```text
-3 passed
-```
-
-### 🔄 Continuous Integration
-
-GitHub Actions automatically builds the application on pushes and pull requests.
-
-The CI pipeline includes:
-
-* Node.js setup
-* pnpm installation
-* Dependency installation
-* Prisma client generation
-* API build
-* Worker build
-* Web build
-
-PostgreSQL and Redis services are provided inside the CI environment.
+GitHub Actions validates the application by installing dependencies, generating Prisma Client, and building the API, worker, and web application.
 
 ---
 
-# Architecture
+## Architecture
 
 ```text
-                         ┌──────────────────────┐
-                         │      Next.js Web      │
-                         │      Frontend        │
-                         └──────────┬───────────┘
-                                    │
-                                    │ HTTP / JWT
-                                    ▼
-                         ┌──────────────────────┐
-                         │     Fastify API      │
-                         │ Authentication       │
-                         │ RBAC                 │
-                         │ Projects / Tasks     │
-                         │ Invites / Billing    │
-                         └───────┬────────┬─────┘
-                                 │        │
-                         Prisma  │        │ BullMQ
-                                 │        │
-                                 ▼        ▼
-                       ┌────────────┐  ┌────────────┐
-                       │ PostgreSQL │  │   Redis    │
-                       │            │  │            │
-                       │ RLS        │  │ Job Queue  │
-                       └────────────┘  └─────┬──────┘
-                                             │
-                                             ▼
-                                      ┌────────────┐
-                                      │   Worker   │
-                                      │  BullMQ    │
-                                      └────────────┘
+                    ┌──────────────────────┐
+                    │      Next.js Web      │
+                    │      Frontend        │
+                    └──────────┬───────────┘
+                               │
+                               │ HTTP / JWT
+                               ▼
+                    ┌──────────────────────┐
+                    │     Fastify API      │
+                    │ Auth / RBAC / SaaS   │
+                    └───────┬────────┬─────┘
+                            │        │
+                       Prisma       │ BullMQ
+                            │        │
+                            ▼        ▼
+                    ┌──────────┐  ┌──────────┐
+                    │PostgreSQL│  │  Redis   │
+                    │   + RLS  │  │  Queue   │
+                    └──────────┘  └────┬─────┘
+                                       │
+                                       ▼
+                                  ┌──────────┐
+                                  │  Worker  │
+                                  └──────────┘
+```
+
+## Tech Stack
+
+### Frontend
+
+- Next.js 14
+- React 18
+- TypeScript
+- Axios
+- React Hook Form
+- Tailwind CSS
+
+### Backend
+
+- Node.js
+- Fastify
+- TypeScript
+- JWT
+- bcrypt
+
+### Data & Infrastructure
+
+- PostgreSQL
+- Prisma ORM
+- PostgreSQL Row-Level Security
+- Redis
+- BullMQ
+- Docker / Docker Compose
+
+### Payments & Testing
+
+- Stripe
+- Playwright
+- GitHub Actions
+- pnpm
+
+---
+
+## Project Structure
+
+```text
+nexora/
+├── apps/
+│   ├── web/
+│   ├── api/
+│   └── worker/
+├── packages/
+│   └── db/
+│       └── prisma/
+├── tests/
+│   └── e2e/
+├── .github/
+│   └── workflows/
+├── docker-compose.yml
+├── package.json
+├── pnpm-workspace.yaml
+└── playwright.config.ts
 ```
 
 ---
 
-# Application Flow
+## Prerequisites
 
-```text
-User
- │
- ▼
-Next.js Frontend
- │
- ▼
-Fastify API
- │
- ├── Authentication
- │
- ├── Authorization / RBAC
- │
- ├── Tenant Context
- │
- ├── Projects
- │
- ├── Tasks
- │
- ├── Invitations
- │
- └── Billing
- │
- ▼
-Prisma
- │
- ▼
-PostgreSQL
- │
- └── Row-Level Security
+Install:
+
+- Node.js 20+
+- pnpm
+- Docker
+- Docker Compose
+- PostgreSQL
+- Redis
+
+## Local Development
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Scarlet-Twinz/nexora.git
+cd nexora
 ```
 
-For asynchronous operations:
+### 2. Install dependencies
+
+```bash
+pnpm install
+```
+
+### 3. Start infrastructure
+
+```bash
+docker compose up -d
+```
+
+### 4. Configure environment variables
+
+Create the required local environment files and configure values such as:
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
+REDIS_URL=redis://HOST:PORT
+JWT_SECRET=your-local-secret
+NEXT_PUBLIC_API_URL=http://localhost:4000
+NEXT_PUBLIC_STRIPE_PRICE_PRO=your-stripe-price-id
+```
+
+Never commit real secrets or `.env` files.
+
+### 5. Generate Prisma Client
+
+```bash
+pnpm --filter @nexora/db exec prisma generate
+```
+
+### 6. Run migrations
+
+```bash
+pnpm --filter @nexora/db exec prisma migrate dev
+```
+
+### 7. Start the development applications
+
+Use the project's configured pnpm development scripts for the web application, API, and worker.
+
+Typical services:
 
 ```text
-Fastify API
-     │
-     ▼
-   Redis
-     │
-     ▼
-  BullMQ
-     │
-     ▼
-  Worker
+Frontend → http://localhost:3000
+API      → http://localhost:4000
+Redis    → Docker
+Database → Docker/PostgreSQL
+Worker   → Background process
 ```
 
 ---
-
-# Tech Stack
-
-## Frontend
-
-* Next.js 14
-* React 18
-* TypeScript
-* Axios
-* React Hook Form
-* Tailwind CSS
-
-## Backend
-
-* Node.js
-* Fastify
-* TypeScript
-* JWT
-* bcrypt
-* Axios
 
 ## Database
 
-* PostgreSQL
-* Prisma ORM
-* PostgreSQL Row-Level Security
-
-## Background Processing
-
-* Redis
-* BullMQ
-
-## Payments
-
-* Stripe
-
-## Testing
-
-* Playwright
-
-## DevOps / CI
-
-* Docker
-* Docker Compose
-* GitHub Actions
-* pnpm
-
----
-
-# Authentication
-
-Nexora uses JWT-based authentication.
-
-The authentication flow is:
-
-```text
-Signup / Login
-      │
-      ▼
-Fastify Auth API
-      │
-      ▼
-JWT Access Token
-      │
-      ▼
-Authenticated Frontend
-      │
-      ▼
-Protected API Requests
-```
-
-Refresh-token functionality uses an HTTP cookie to provide a separate mechanism for maintaining authenticated sessions.
-
-Passwords are hashed before storage and are never stored as plaintext.
-
----
-
-# Multi-Tenancy
-
-Nexora uses a tenant-based architecture.
-
-The primary relationships are:
-
-```text
-Tenant
- ├── Memberships
- ├── Projects
- │    └── Tasks
- └── Invitations
-```
-
-Users are connected to workspaces through memberships.
-
-This allows the same application instance to serve multiple independent workspaces while keeping their data isolated.
-
----
-
-# Database & Prisma
-
-The database schema is managed with Prisma.
-
-Generate the Prisma client:
+Generate Prisma Client:
 
 ```bash
 pnpm --filter @nexora/db exec prisma generate
@@ -376,159 +253,25 @@ Create and apply a development migration:
 pnpm --filter @nexora/db exec prisma migrate dev
 ```
 
-The database contains models for:
-
-* Users
-* Tenants
-* Memberships
-* Projects
-* Tasks
-* Invitations
-
-PostgreSQL RLS provides an additional database-level tenant isolation layer.
+The data model includes users, tenants, memberships, projects, tasks, and invitations.
 
 ---
 
-# Project Structure
+## Build
 
-```text
-nexora/
-│
-├── apps/
-│   ├── web/
-│   │   ├── pages/
-│   │   └── src/
-│   │
-│   ├── api/
-│   │   └── src/
-│   │       ├── routes/
-│   │       ├── middleware/
-│   │       └── db.ts
-│   │
-│   └── worker/
-│       └── src/
-│
-├── packages/
-│   └── db/
-│       ├── prisma/
-│       │   ├── migrations/
-│       │   └── schema.prisma
-│       └── src/
-│
-├── tests/
-│   └── e2e/
-│
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-│
-├── docker-compose.yml
-├── package.json
-├── pnpm-workspace.yaml
-└── playwright.config.ts
-```
-
----
-
-# Prerequisites
-
-Before running Nexora locally, install:
-
-* Node.js 20+
-* pnpm
-* Docker
-* Docker Compose
-* PostgreSQL
-* Redis
-
-The project uses pnpm workspaces.
-
----
-
-# Local Development
-
-Clone the repository:
-
-```bash
-git clone https://github.com/Scarlet-Twinz/nexora.git
-cd nexora
-```
-
-Install dependencies:
-
-```bash
-pnpm install
-```
-
-Start infrastructure:
-
-```bash
-docker compose up -d
-```
-
-Generate Prisma:
-
-```bash
-pnpm --filter @nexora/db exec prisma generate
-```
-
-Run migrations:
-
-```bash
-pnpm --filter @nexora/db exec prisma migrate dev
-```
-
-Start the development applications using the project's configured pnpm scripts.
-
-The typical development services are:
-
-```text
-Frontend     http://localhost:3000
-API          http://localhost:4000
-PostgreSQL   Docker
-Redis        Docker
-Worker       Background process
-```
-
----
-
-# Environment Variables
-
-Create the required environment files locally.
-
-Example:
-
-```env
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
-
-REDIS_URL=redis://HOST:PORT
-
-JWT_SECRET=your-local-secret
-
-NEXT_PUBLIC_API_URL=http://localhost:4000
-
-NEXT_PUBLIC_STRIPE_PRICE_PRO=your-stripe-price-id
-```
-
-> Never commit real secrets, API keys, database passwords, or Stripe secret keys to Git.
-
----
-
-# Build
-
-Build the API:
+API:
 
 ```bash
 pnpm --filter @nexora/api build
 ```
 
-Build the worker:
+Worker:
 
 ```bash
 pnpm --filter worker build
 ```
 
-Build the web application:
+Web:
 
 ```bash
 pnpm --filter web build
@@ -536,39 +279,21 @@ pnpm --filter web build
 
 ---
 
-# Testing
+## Testing
 
-Run the Playwright test suite:
+Run Playwright:
 
 ```bash
 pnpm exec playwright test
 ```
 
-The E2E suite covers core application flows including authentication, projects, and tasks.
-
-Example result:
-
-```text
-3 passed
-```
+Core E2E coverage includes authentication, project creation, and task management.
 
 ---
 
-# Continuous Integration
+## CI
 
-Nexora uses GitHub Actions for continuous integration.
-
-The CI workflow:
-
-1. Starts PostgreSQL
-2. Starts Redis
-3. Installs dependencies
-4. Generates Prisma Client
-5. Builds the API
-6. Builds the worker
-7. Builds the frontend
-
-Workflow:
+GitHub Actions validates the project on pushes and pull requests.
 
 ```text
 Git Push / Pull Request
@@ -585,117 +310,66 @@ Git Push / Pull Request
           └── Web build
 ```
 
-
-# What I Implemented
-
-This project goes beyond a basic project-management CRUD application.
-
-Key engineering work includes:
-
-* Designed a multi-tenant SaaS architecture
-* Implemented JWT authentication
-* Implemented role-based authorization
-* Built workspace membership handling
-* Built project and task management
-* Implemented team invitation flows
-* Added Stripe subscription billing
-* Integrated Redis and BullMQ
-* Built a dedicated background worker
-* Added PostgreSQL Row-Level Security
-* Added transaction-local tenant context
-* Added Playwright browser testing
-* Added GitHub Actions CI
-* Structured the application as a pnpm monorepo
-* Added Docker-based infrastructure
-* Separated frontend, API, worker, and database responsibilities
-
 ---
 
-# Security Architecture
-
-Nexora uses multiple layers of protection:
+## Security Architecture
 
 ```text
-                  Request
-                     │
-                     ▼
-             Authentication
-                     │
-                     ▼
-               Authorization
-                     │
-                     ▼
-              Tenant Context
-                     │
-                     ▼
-              Prisma Queries
-                     │
-                     ▼
-          PostgreSQL Row-Level
-                 Security
-                     │
-                     ▼
-             Tenant Data
+Request
+   │
+   ▼
+Authentication
+   │
+   ▼
+Authorization / RBAC
+   │
+   ▼
+Tenant Context
+   │
+   ▼
+Prisma Queries
+   │
+   ▼
+PostgreSQL RLS
+   │
+   ▼
+Tenant Data
 ```
 
-This layered approach means tenant isolation is not dependent solely on frontend behavior or application-level checks.
+This layered model means tenant isolation is supported at both the application and database levels.
 
 ---
 
-# Current Status
+## Current Status
 
-**Status: Deployed and functional**
+**Status: Functional full-stack SaaS project**
 
-Implemented:
+Implemented areas include:
 
-* Authentication
-* Multi-tenancy
-* RBAC
-* Projects
-* Tasks
-* Invitations
-* Stripe billing
-* Background jobs
-* PostgreSQL RLS
-* Playwright E2E
-* GitHub Actions CI
-* Production deployment
+- Authentication
+- Multi-tenancy
+- RBAC
+- Projects and tasks
+- Team invitations
+- Stripe billing
+- Redis and BullMQ background jobs
+- PostgreSQL RLS
+- Playwright E2E testing
+- GitHub Actions CI
+- Docker-based infrastructure
 
-The project is actively structured as a full-stack SaaS application demonstrating backend architecture, security, databases, asynchronous processing, testing, and DevOps practices.
-
----
-
-# Contributing
-
-Contributions and improvements are welcome.
-
-To contribute:
-
-```bash
-git checkout -b feature/your-feature
-```
-
-Make your changes, test them locally, and open a pull request.
-
-Before submitting a pull request, ensure that:
-
-* The application builds successfully
-* Existing tests pass
-* New functionality includes appropriate tests
-* No secrets are committed
-
-* Deployment: The project is configured for deployment, but a public hosted URL is not currently provided. The application can be run locally by following the Local Development instructions above.
+A public hosted URL is not currently provided. Follow the local development instructions to run the application.
 
 ---
 
-# License
+## License
 
 This project is available for educational and portfolio purposes.
 
----
-
 ## Author
 
-**Scarlet-Twinz**
+**Anthony Emmanuella Mmasinachi**
 
-GitHub: `https://github.com/Scarlet-Twinz`
+Full-stack developer focused on frontend engineering, backend systems, APIs, automation, databases, and practical software architecture.
+
+**GitHub:** https://github.com/Scarlet-Twinz
