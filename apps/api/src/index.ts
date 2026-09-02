@@ -1,18 +1,16 @@
-﻿import dotenv from 'dotenv';
+import dotenv from 'dotenv';
 
-dotenv.config({
-  path: '../../.env',
-  override: true,
-});
+// Load local .env only in development.
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
-console.log(
-  'STRIPE KEY LOADED:',
-  process.env.STRIPE_SECRET_KEY?.slice(0, 12)
-);
+// NOTE: Do NOT log secrets or secret fragments
 
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
+import fastifyRaw from '@fastify/raw-body';
 
 import authPlugin from './plugins/auth';
 import authRoutes from './routes/auth';
@@ -20,6 +18,7 @@ import projectRoutes from './routes/projects';
 import taskRoutes from './routes/tasks';
 import inviteRoutes from './routes/invites';
 import stripeRoutes from './routes/stripe';
+import webhookRoutes from './routes/webhooks';
 import healthJobs from './routes/health-jobs';
 
 const fastify = Fastify({ logger: true });
@@ -28,6 +27,13 @@ const fastify = Fastify({ logger: true });
 fastify.register(fastifyCors, {
   origin: 'http://localhost:3000',
   credentials: true,
+});
+
+// Raw body plugin for routes that need it (webhooks)
+fastify.register(fastifyRaw, {
+  field: 'rawBody',
+  global: false,
+  encoding: false,
 });
 
 // Cookies
@@ -42,6 +48,7 @@ fastify.register(projectRoutes);
 fastify.register(taskRoutes);
 fastify.register(inviteRoutes);
 fastify.register(stripeRoutes);
+fastify.register(webhookRoutes);
 fastify.register(healthJobs);
 
 // Health
