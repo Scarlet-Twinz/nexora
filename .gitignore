@@ -1,12 +1,19 @@
-node_modules
+# Security & housekeeping
+
+# Local environment
 .env
-.env.local
-dist
-build
-.next
-.vscode
+
+# Node
+node_modules/
 .DS_Store
 
-.env.test.local
+# Build
+dist/
+build/
 
-test-results/
+# Local credentials / test artifacts
+cookies.txt
+test-db.js
+
+# Editor
+.vscode/
