@@ -661,7 +661,7 @@ Implemented:
 * GitHub Actions CI
 * Production deployment
 
-The project is actively structured as a portfolio-grade full-stack SaaS application demonstrating backend architecture, security, databases, asynchronous processing, testing, and DevOps practices.
+The project is actively structured as a full-stack SaaS application demonstrating backend architecture, security, databases, asynchronous processing, testing, and DevOps practices.
 
 ---
 
