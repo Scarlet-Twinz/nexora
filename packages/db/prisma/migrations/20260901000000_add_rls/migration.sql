@@ -36,7 +36,10 @@ CREATE POLICY task_tenant_isolation ON "Task"
   );
 
 CREATE POLICY invite_tenant_isolation ON "Invite"
-  USING ("tenantId" = current_setting('app.tenant_id', true))
+  USING (
+    "tenantId" = current_setting('app.tenant_id', true)
+    OR "token" = current_setting('app.invite_token', true)
+  )
   WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
 
 CREATE POLICY subscription_tenant_isolation ON "Subscription"
