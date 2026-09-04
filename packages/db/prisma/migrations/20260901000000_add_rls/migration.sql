@@ -7,8 +7,15 @@ ALTER TABLE "Project" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Task" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Invite" ENABLE ROW LEVEL SECURITY;
 
+-- Normal tenant-scoped access uses app.tenant_id. Authentication bootstrap
+-- may temporarily use app.user_id after the server has identified the user,
+-- allowing it to load that user's memberships without exposing other users'
+-- memberships.
 CREATE POLICY membership_tenant_isolation ON "Membership"
-  USING ("tenantId" = current_setting('app.tenant_id', true))
+  USING (
+    "tenantId" = current_setting('app.tenant_id', true)
+    OR "userId" = current_setting('app.user_id', true)
+  )
   WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
 
 CREATE POLICY project_tenant_isolation ON "Project"
@@ -33,7 +40,7 @@ CREATE POLICY task_tenant_isolation ON "Task"
 
 -- Public invite acceptance discovers the tenant from a one-time invite
 -- token before app.tenant_id is known. The token itself is transaction-local
--- and is never persisted as a session/global setting.
+-- and never becomes a session/global setting.
 CREATE POLICY invite_tenant_isolation ON "Invite"
   USING (
     "tenantId" = current_setting('app.tenant_id', true)
