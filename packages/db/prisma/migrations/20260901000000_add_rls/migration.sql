@@ -1,15 +1,11 @@
--- Enable PostgreSQL row-level security for tenant-owned data.
--- The application sets app.tenant_id inside the same transaction via withTenant().
--- Bootstrap/authentication tables remain outside RLS because they are accessed
--- before a tenant context exists.
+-- Enable PostgreSQL row-level security for tenant-owned tables that are
+-- present in the migration history. The application sets app.tenant_id
+-- inside the same Prisma transaction via withTenant().
 
 ALTER TABLE "Membership" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Project" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Task" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Invite" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "Subscription" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "AuditLog" ENABLE ROW LEVEL SECURITY;
-ALTER TABLE "ProcessedWebhook" ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY membership_tenant_isolation ON "Membership"
   USING ("tenantId" = current_setting('app.tenant_id', true))
@@ -35,21 +31,12 @@ CREATE POLICY task_tenant_isolation ON "Task"
     )
   );
 
+-- Public invite acceptance discovers the tenant from a one-time invite
+-- token before app.tenant_id is known. The token itself is transaction-local
+-- and is never persisted as a session/global setting.
 CREATE POLICY invite_tenant_isolation ON "Invite"
   USING (
     "tenantId" = current_setting('app.tenant_id', true)
     OR "token" = current_setting('app.invite_token', true)
   )
-  WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
-
-CREATE POLICY subscription_tenant_isolation ON "Subscription"
-  USING ("tenantId" = current_setting('app.tenant_id', true))
-  WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
-
-CREATE POLICY audit_log_tenant_isolation ON "AuditLog"
-  USING ("tenantId" = current_setting('app.tenant_id', true))
-  WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
-
-CREATE POLICY processed_webhook_tenant_isolation ON "ProcessedWebhook"
-  USING ("tenantId" = current_setting('app.tenant_id', true))
   WITH CHECK ("tenantId" = current_setting('app.tenant_id', true));
