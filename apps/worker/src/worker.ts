@@ -1,7 +1,6 @@
 import {
   Worker,
   Queue,
-  Job,
 } from 'bullmq';
 import prisma from '@nexora/db/src';
 import nodemailer from 'nodemailer';
@@ -21,6 +20,26 @@ const connection = {
       }
     : {}),
 };
+
+// Execute worker database work inside the same transaction-local
+// tenant context used by the API. This keeps queue consumers aligned
+// with PostgreSQL RLS instead of relying on an unscoped Prisma client.
+async function withTenant<T>(
+  tenantId: string,
+  callback: (tx: typeof prisma) => Promise<T>
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      SELECT set_config(
+        'app.tenant_id',
+        ${tenantId},
+        true
+      )
+    `;
+
+    return callback(tx as typeof prisma);
+  });
+}
 
 // Main queue
 const defaultQueue = new Queue('default', {
@@ -42,14 +61,28 @@ const worker = new Worker(
 
     switch (job.name) {
       case 'send-invite': {
-        const { inviteId } = job.data as {
+        const { inviteId, tenantId } = job.data as {
           inviteId: string;
+          tenantId: string;
         };
 
-        const invite =
-          await prisma.invite.findUnique({
-            where: { id: inviteId },
-          });
+        if (!tenantId) {
+          throw new Error(
+            `Missing tenantId for invite job: ${inviteId}`
+          );
+        }
+
+        const invite = await withTenant(
+          tenantId,
+          async (tx) => {
+            return tx.invite.findFirst({
+              where: {
+                id: inviteId,
+                tenantId,
+              },
+            });
+          }
+        );
 
         if (!invite) {
           throw new Error(
@@ -106,6 +139,7 @@ const worker = new Worker(
         return {
           type: 'send-invite',
           inviteId,
+          tenantId,
           email: invite.email,
         };
       }
@@ -143,13 +177,9 @@ const worker = new Worker(
   {
     connection,
     concurrency: 6,
-
-    // Retry failed jobs automatically.
-    // Producers can override these settings.
   }
 );
 
-// Completed jobs
 worker.on(
   'completed',
   async (job, result) => {
@@ -160,7 +190,6 @@ worker.on(
   }
 );
 
-// Failed jobs
 worker.on(
   'failed',
   async (job, error) => {
@@ -175,13 +204,6 @@ worker.on(
       `Attempt ${job.attemptsMade} failed`
     );
 
-    /*
-     * BullMQ automatically retries jobs when the
-     * producer creates them with attempts > 1.
-     *
-     * Once the final attempt fails, place a copy
-     * of the failed job into the dead-letter queue.
-     */
     if (
       job.opts.attempts &&
       job.attemptsMade >= job.opts.attempts
@@ -217,75 +239,3 @@ worker.on(
     }
   }
 );
-
-// Worker-level errors
-worker.on('error', (error) => {
-  console.error('========== WORKER ERROR ==========');
-  console.error(error);
-  console.error('===================================');
-});
-
-// Redis connection events
-worker.on(
-  'ready',
-  () => {
-    console.log(
-      'Nexora worker connected to Redis'
-    );
-  }
-);
-
-worker.on(
-  'closing',
-  () => {
-    console.log(
-      'Nexora worker shutting down...'
-    );
-  }
-);
-
-/*
- * Scheduled health-check job.
- *
- * Every 5 minutes we put a health-check job
- * into the default queue.
- */
-const scheduleHealthCheck =
-  async () => {
-    try {
-      await defaultQueue.add(
-        'worker-health-check',
-        {},
-        {
-          repeat: {
-            every: 5 * 60 * 1000,
-          },
-          jobId:
-            'nexora-worker-health-check',
-          removeOnComplete: 20,
-          removeOnFail: 20,
-        }
-      );
-
-      console.log(
-        'Worker health-check scheduled'
-      );
-    } catch (error) {
-      console.error(
-        'Failed to schedule health-check:',
-        error
-      );
-    }
-  };
-
-scheduleHealthCheck();
-
-console.log(
-  'Nexora worker listening for jobs...'
-);
-
-export {
-  worker,
-  defaultQueue,
-  deadLetterQueue,
-};
