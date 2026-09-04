@@ -1,19 +1,26 @@
-# Security & housekeeping
-
-# Local environment
+# Security & local configuration
 .env
+.env.*
+!.env.example
+!.env.*.example
+cookies.txt
+login.json
 
-# Node
+# Dependencies
 node_modules/
-.DS_Store
 
-# Build
+# Build output
 dist/
 build/
+.next/
 
-# Local credentials / test artifacts
-cookies.txt
+# Test artifacts
+playwright-report/
+test-results/
+
+# Local databases / scripts
 test-db.js
 
-# Editor
+# OS / editor
+.DS_Store
 .vscode/
