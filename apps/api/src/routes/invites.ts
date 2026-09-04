@@ -109,10 +109,13 @@ export default async function inviteRoutes(
 
       const invite = result.invite;
 
+      // Carry tenant context across the async boundary so the worker
+      // can re-establish the same database RLS context.
       await queue.add(
         'send-invite',
         {
           inviteId: invite.id,
+          tenantId: auth.tenantId,
         },
         {
           attempts: 5,
@@ -134,10 +137,8 @@ export default async function inviteRoutes(
   );
 
   // Accept invite — public
-  //
-  // The invite token is used only to discover the tenant.
-  // Once the tenant is known, all protected operations use
-  // the transaction-local tenant context.
+  // The invite token is used only to discover the tenant. Once the tenant
+  // is known, protected operations run with the transaction-local context.
   fastify.post(
     '/invites/accept',
     async (request: any, reply) => {
@@ -154,14 +155,7 @@ export default async function inviteRoutes(
       const result =
         await prisma.$transaction(
           async (tx: any) => {
-            await tx.$executeRaw`
-              SELECT set_config(
-                'app.invite_token',
-                ${token},
-                true
-              )
-            `;
-
+            // Token lookup must remain available before tenant context exists.
             const invite =
               await tx.invite.findUnique({
                 where: {
