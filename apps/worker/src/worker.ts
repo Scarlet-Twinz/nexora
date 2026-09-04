@@ -1,7 +1,6 @@
 import {
   Worker,
   Queue,
-  Job,
 } from 'bullmq';
 import prisma from '@nexora/db/src';
 import nodemailer from 'nodemailer';
@@ -22,15 +21,37 @@ const connection = {
     : {}),
 };
 
-// Main queue
 const defaultQueue = new Queue('default', {
   connection,
 });
 
-// Dead-letter queue
 const deadLetterQueue = new Queue('dead-letter', {
   connection,
 });
+
+// Re-establish the transaction-local tenant context before a worker
+// touches tenant-owned data. This keeps background jobs subject to the
+// same PostgreSQL RLS boundary as API requests.
+async function withTenant<T>(
+  tenantId: string,
+  callback: (tx: typeof prisma) => Promise<T>
+): Promise<T> {
+  if (!tenantId) {
+    throw new Error('tenantId is required for tenant-scoped job');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      SELECT set_config(
+        'app.tenant_id',
+        ${tenantId},
+        true
+      )
+    `;
+
+    return callback(tx as typeof prisma);
+  });
+}
 
 const worker = new Worker(
   'default',
@@ -42,71 +63,86 @@ const worker = new Worker(
 
     switch (job.name) {
       case 'send-invite': {
-        const { inviteId } = job.data as {
+        const { inviteId, tenantId } = job.data as {
           inviteId: string;
+          tenantId: string;
         };
 
-        const invite =
-          await prisma.invite.findUnique({
-            where: { id: inviteId },
-          });
-
-        if (!invite) {
+        if (!inviteId || !tenantId) {
           throw new Error(
-            `Invite not found: ${inviteId}`
+            'send-invite job requires inviteId and tenantId'
           );
         }
 
-        const inviteUrl =
-          `${process.env.FRONTEND_URL || 'http://localhost:3000'}` +
-          `/accept-invite?token=${invite.token}`;
+        const result = await withTenant(
+          tenantId,
+          async (tx) => {
+            const invite =
+              await tx.invite.findUnique({
+                where: { id: inviteId },
+              });
 
-        if (
-          process.env.SMTP_HOST &&
-          process.env.SMTP_USER
-        ) {
-          const transporter =
-            nodemailer.createTransport({
-              host: process.env.SMTP_HOST,
-              port: Number(
-                process.env.SMTP_PORT || 587
-              ),
-              secure:
-                process.env.SMTP_SECURE === 'true',
-              auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS,
-              },
-            });
+            if (!invite) {
+              throw new Error(
+                `Invite not found: ${inviteId}`
+              );
+            }
 
-          await transporter.sendMail({
-            from:
-              process.env.SMTP_FROM ||
-              '"Nexora" <no-reply@nexora.local>',
-            to: invite.email,
-            subject:
-              "You're invited to Nexora",
-            text:
-              `You've been invited to join Nexora. ` +
-              `Accept your invite here: ${inviteUrl}`,
-            html:
-              `<p>You've been invited to join Nexora.</p>` +
-              `<p><a href="${inviteUrl}">Accept your invite</a></p>`,
-          });
+            const inviteUrl =
+              `${process.env.FRONTEND_URL || 'http://localhost:3000'}` +
+              `/accept-invite?token=${invite.token}`;
 
-          console.log(
-            `Invite email sent: ${invite.email}`
-          );
-        } else {
-          console.log(
-            `Invite link for ${invite.email}: ${inviteUrl}`
-          );
-        }
+            if (
+              process.env.SMTP_HOST &&
+              process.env.SMTP_USER
+            ) {
+              const transporter =
+                nodemailer.createTransport({
+                  host: process.env.SMTP_HOST,
+                  port: Number(
+                    process.env.SMTP_PORT || 587
+                  ),
+                  secure:
+                    process.env.SMTP_SECURE === 'true',
+                  auth: {
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS,
+                  },
+                });
+
+              await transporter.sendMail({
+                from:
+                  process.env.SMTP_FROM ||
+                  '"Nexora" <no-reply@nexora.local>',
+                to: invite.email,
+                subject: "You're invited to Nexora",
+                text:
+                  `You've been invited to join Nexora. ` +
+                  `Accept your invite here: ${inviteUrl}`,
+                html:
+                  `<p>You've been invited to Nexora.</p>` +
+                  `<p><a href="${inviteUrl}">Accept your invite</a></p>`,
+              });
+
+              console.log(
+                `Invite email sent: ${invite.email}`
+              );
+            } else {
+              console.log(
+                `Invite link for ${invite.email}: ${inviteUrl}`
+              );
+            }
+
+            return {
+              inviteId,
+              email: invite.email,
+            };
+          }
+        );
 
         return {
           type: 'send-invite',
-          inviteId,
-          email: invite.email,
+          ...result,
         };
       }
 
@@ -143,13 +179,9 @@ const worker = new Worker(
   {
     connection,
     concurrency: 6,
-
-    // Retry failed jobs automatically.
-    // Producers can override these settings.
   }
 );
 
-// Completed jobs
 worker.on(
   'completed',
   async (job, result) => {
@@ -160,7 +192,6 @@ worker.on(
   }
 );
 
-// Failed jobs
 worker.on(
   'failed',
   async (job, error) => {
@@ -175,13 +206,6 @@ worker.on(
       `Attempt ${job.attemptsMade} failed`
     );
 
-    /*
-     * BullMQ automatically retries jobs when the
-     * producer creates them with attempts > 1.
-     *
-     * Once the final attempt fails, place a copy
-     * of the failed job into the dead-letter queue.
-     */
     if (
       job.opts.attempts &&
       job.attemptsMade >= job.opts.attempts
@@ -218,14 +242,12 @@ worker.on(
   }
 );
 
-// Worker-level errors
 worker.on('error', (error) => {
   console.error('========== WORKER ERROR ==========');
   console.error(error);
   console.error('===================================');
 });
 
-// Redis connection events
 worker.on(
   'ready',
   () => {
@@ -244,12 +266,6 @@ worker.on(
   }
 );
 
-/*
- * Scheduled health-check job.
- *
- * Every 5 minutes we put a health-check job
- * into the default queue.
- */
 const scheduleHealthCheck =
   async () => {
     try {
