@@ -53,9 +53,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: pnpm --filter @nexora/db exec prisma migrate deploy
 
       - name: Generate Prisma client
         run: pnpm --filter @nexora/db exec prisma generate
