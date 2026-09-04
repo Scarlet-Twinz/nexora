@@ -12,11 +12,6 @@ export default defineConfig({
     baseURL: 'http://localhost:3000',
     headless: true,
     trace: 'on-first-retry',
-
-    launchOptions: {
-      executablePath:
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    },
   },
 
   reporter: 'list',
