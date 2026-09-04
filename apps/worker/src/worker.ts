@@ -1,3 +1,9 @@
+import dotenv from 'dotenv';
+
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
+
 import {
   Worker,
   Queue,
@@ -117,7 +123,7 @@ const worker = new Worker(
                 to: invite.email,
                 subject: "You're invited to Nexora",
                 text:
-                  `You've been invited to join Nexora. ` +
+                  `You've been invited to Nexora. ` +
                   `Accept your invite here: ${inviteUrl}`,
                 html:
                   `<p>You've been invited to Nexora.</p>` +
