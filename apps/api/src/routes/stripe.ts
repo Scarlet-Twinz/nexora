@@ -4,7 +4,7 @@ import prisma from '@nexora/db/src';
 
 export default async function stripeRoutes(
   fastify: FastifyInstance
-){
+) {
   fastify.post(
     '/stripe/create-checkout-session',
     {
@@ -27,11 +27,6 @@ export default async function stripeRoutes(
           error: 'Stripe is not configured',
         });
       }
-
-      console.log(
-        'STRIPE ROUTE KEY:',
-        stripeKey.slice(0, 12)
-      );
 
       const stripe = new Stripe(stripeKey);
 
@@ -60,24 +55,19 @@ export default async function stripeRoutes(
       const session =
         await stripe.checkout.sessions.create({
           mode: 'subscription',
-
           line_items: [
             {
               price: body.priceId,
               quantity: 1,
             },
           ],
-
           customer_email: request.auth!.email,
-
           metadata: {
             tenantId,
           },
-
           success_url:
             `${process.env.FRONTEND_URL || 'http://localhost:3000'}` +
             '/billing/success?session_id={CHECKOUT_SESSION_ID}',
-
           cancel_url:
             `${process.env.FRONTEND_URL || 'http://localhost:3000'}` +
             '/billing/cancel',
