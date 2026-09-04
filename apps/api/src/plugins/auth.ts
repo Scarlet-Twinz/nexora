@@ -2,6 +2,7 @@ import fp from 'fastify-plugin';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { verifyAccess } from '../lib/jwt';
 import prisma from '@nexora/db/src';
+import { withTenant } from '../db';
 
 type AuthPayload = {
   userId: string;
@@ -55,14 +56,20 @@ export default fp(async (fastify) => {
         let tenantId = payload.tenantId;
 
         if (payload.tenantId) {
-          const membership = await prisma.membership.findUnique({
-            where: {
-              tenantId_userId: {
-                tenantId: payload.tenantId,
-                userId: payload.userId,
-              },
-            },
-          });
+          // Membership is RLS-protected. Establish the tenant context
+          // before validating the JWT's tenant membership.
+          const membership = await withTenant(
+            payload.tenantId,
+            async (tx) =>
+              tx.membership.findUnique({
+                where: {
+                  tenantId_userId: {
+                    tenantId: payload.tenantId as string,
+                    userId: payload.userId,
+                  },
+                },
+              })
+          );
 
           if (!membership) {
             await reply.code(401).send({
