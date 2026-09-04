@@ -136,9 +136,10 @@ export default async function inviteRoutes(
     }
   );
 
-  // Accept invite — public
-  // The invite token is used only to discover the tenant. Once the tenant
-  // is known, protected operations run with the transaction-local context.
+  // Accept invite — public.
+  // The invite token is the only tenant-discovery credential available
+  // before authentication, so it is placed in transaction-local context
+  // before the RLS-protected invite lookup.
   fastify.post(
     '/invites/accept',
     async (request: any, reply) => {
@@ -155,7 +156,14 @@ export default async function inviteRoutes(
       const result =
         await prisma.$transaction(
           async (tx: any) => {
-            // Token lookup must remain available before tenant context exists.
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.invite_token',
+                ${token},
+                true
+              )
+            `;
+
             const invite =
               await tx.invite.findUnique({
                 where: {
