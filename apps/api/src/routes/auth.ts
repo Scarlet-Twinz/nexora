@@ -40,12 +40,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
     /*
      * INVITED SIGNUP
      *
-     * If an inviteToken is supplied, the user joins the
-     * existing tenant instead of creating a new tenant.
+     * The invite token is placed in transaction-local context before
+     * resolving the invite. Once the invite's tenant is known, the
+     * tenant context is established before membership creation.
      */
     if (inviteToken) {
       try {
         const result = await prisma.$transaction(async (tx: any) => {
+          await tx.$executeRaw`
+            SELECT set_config(
+              'app.invite_token',
+              ${inviteToken},
+              true
+            )
+          `;
+
           const invite = await tx.invite.findUnique({
             where: { token: inviteToken },
           });
@@ -73,6 +82,22 @@ export default async function authRoutes(fastify: FastifyInstance) {
               name: body?.name || null,
             },
           });
+
+          await tx.$executeRaw`
+            SELECT set_config(
+              'app.user_id',
+              ${user.id},
+              true
+            )
+          `;
+
+          await tx.$executeRaw`
+            SELECT set_config(
+              'app.tenant_id',
+              ${invite.tenantId},
+              true
+            )
+          `;
 
           await tx.membership.create({
             data: {
@@ -134,7 +159,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
      * NORMAL SIGNUP
      *
      * No invite token -> create a new tenant and make
-     * the new user its OWNER.
+     * the new user its OWNER. The tenant context is set
+     * before the RLS-protected membership is inserted.
      */
     const slug = tenantName
       .toLowerCase()
@@ -148,17 +174,35 @@ export default async function authRoutes(fastify: FastifyInstance) {
         },
       });
 
+      await tx.$executeRaw`
+        SELECT set_config(
+          'app.tenant_id',
+          ${tenant.id},
+          true
+        )
+      `;
+
       const user = await tx.user.create({
         data: {
           email,
           password: hashed,
           name: body?.name || null,
-          memberships: {
-            create: {
-              tenantId: tenant.id,
-              role: 'OWNER',
-            },
-          },
+        },
+      });
+
+      await tx.$executeRaw`
+        SELECT set_config(
+          'app.user_id',
+          ${user.id},
+          true
+        )
+      `;
+
+      await tx.membership.create({
+        data: {
+          tenantId: tenant.id,
+          userId: user.id,
+          role: 'OWNER',
         },
       });
 
@@ -181,9 +225,25 @@ export default async function authRoutes(fastify: FastifyInstance) {
         .send({ error: 'email/password required' });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-      include: { memberships: true },
+    const user = await prisma.$transaction(async (tx: any) => {
+      const found = await tx.user.findUnique({
+        where: { email },
+      });
+
+      if (!found) return null;
+
+      await tx.$executeRaw`
+        SELECT set_config(
+          'app.user_id',
+          ${found.id},
+          true
+        )
+      `;
+
+      return tx.user.findUnique({
+        where: { id: found.id },
+        include: { memberships: true },
+      });
     });
 
     if (!user) {
@@ -236,9 +296,25 @@ export default async function authRoutes(fastify: FastifyInstance) {
     try {
       const data = verifyRefresh(cookie) as any;
 
-      const user = await prisma.user.findUnique({
-        where: { id: data.userId },
-        include: { memberships: true },
+      const user = await prisma.$transaction(async (tx: any) => {
+        const found = await tx.user.findUnique({
+          where: { id: data.userId },
+        });
+
+        if (!found) return null;
+
+        await tx.$executeRaw`
+          SELECT set_config(
+            'app.user_id',
+            ${found.id},
+            true
+          )
+        `;
+
+        return tx.user.findUnique({
+          where: { id: found.id },
+          include: { memberships: true },
+        });
       });
 
       if (!user) {
@@ -268,7 +344,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       });
 
       return reply.send({ access });
-    } catch (err) {
+    } catch {
       return reply
         .code(401)
         .send({ error: 'invalid refresh' });

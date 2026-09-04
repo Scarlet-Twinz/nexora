@@ -113,6 +113,7 @@ export default async function inviteRoutes(
         'send-invite',
         {
           inviteId: invite.id,
+          tenantId: invite.tenantId,
         },
         {
           attempts: 5,
@@ -212,6 +213,14 @@ export default async function inviteRoutes(
                 token: invite.token,
               };
             }
+
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.user_id',
+                ${user.id},
+                true
+              )
+            `;
 
             const existingMembership =
               await tx.membership.findUnique({

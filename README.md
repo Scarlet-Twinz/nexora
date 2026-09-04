@@ -21,7 +21,7 @@ Nexora provides isolated workspaces where users can:
 - Authenticate with JWT
 - Manage Pro subscriptions through Stripe
 - Process asynchronous work with Redis and BullMQ
-- Apply tenant-aware database access through transaction-local tenant context
+- Enforce tenant isolation at both the application and PostgreSQL RLS layers
 - Run browser-level tests with Playwright
 
 The codebase is organized as a **pnpm monorepo** with dedicated web, API, worker, and database packages.
@@ -30,14 +30,15 @@ The codebase is organized as a **pnpm monorepo** with dedicated web, API, worker
 
 Nexora is designed around several problems that appear in real SaaS systems:
 
-- **Multi-tenancy:** tenant identity is carried through application operations rather than relying only on client-side filtering.
+- **Multi-tenancy:** tenant identity is carried through application operations and is independently enforced by PostgreSQL RLS policies.
 - **Authorization:** authentication and workspace-level RBAC are separate concerns from resource access.
 - **Background processing:** asynchronous work is separated from HTTP request handling through Redis and BullMQ.
 - **Database safety:** tenant context is established inside a database transaction so it is scoped to the transaction rather than leaking across pooled connections.
+- **Defense in depth:** application-level tenant predicates are backed by database policies for tenant-owned tables.
 - **Verification:** critical user flows are exercised with browser-level Playwright tests.
 - **Delivery:** GitHub Actions provides repeatable dependency installation, Prisma generation, and application builds.
 
-> **Security note:** the repository contains the transaction-local tenant-context foundation for database isolation. PostgreSQL RLS policies are not documented as active until they are present in the migration history and covered by tests.
+> **Security note:** PostgreSQL RLS is now defined in the `add_rls` migration for tenant-owned resources. Authentication and public invite flows establish the transaction-local context required by those policies, and queue jobs carry their tenant ID into the worker.
 
 ## Features
 
@@ -53,7 +54,7 @@ Nexora is designed around several problems that appear in real SaaS systems:
 
 ### Multi-Tenancy
 
-Each workspace represents a tenant. Users belong to tenants through memberships, and tenant-aware operations restrict access to workspace-owned resources.
+Each workspace represents a tenant. Users belong to tenants through memberships, and tenant-aware operations restrict access to workspace-owned resources. PostgreSQL RLS provides a database-level backstop against accidental cross-tenant access.
 
 ### Projects & Tasks
 
@@ -61,11 +62,11 @@ Users can create, view, update, and delete projects and tasks while maintaining 
 
 ### Team Invitations
 
-Workspace members with appropriate permissions can invite users using expiring invitation tokens and role assignment.
+Workspace members with appropriate permissions can invite users using expiring invitation tokens and role assignment. Invite jobs carry the tenant context required by the worker's RLS-protected database access.
 
 ### Stripe Billing
 
-The billing flow supports Pro subscription checkout through Stripe Checkout. Secret credentials remain server-side.
+The billing flow supports Pro subscription checkout through Stripe Checkout. Secret credentials remain server-side, and tenant lookup is executed within the tenant database context.
 
 ### Background Jobs
 
@@ -73,6 +74,8 @@ Redis and BullMQ handle asynchronous processing through a dedicated worker:
 
 ```text
 API → Redis → BullMQ → Worker
+                    │
+                    └→ transaction-local tenant context
 ```
 
 ### End-to-End Testing
@@ -105,12 +108,13 @@ GitHub Actions validates the application by installing dependencies, generating 
                             ▼        ▼
                     ┌──────────┐  ┌──────────┐
                     │PostgreSQL│  │  Redis   │
-                    │  Tenant  │  │  Queue   │
-                    │  Context │  └────┬─────┘
-                    └──────────┘       │
+                    │Tenant RLS│  │  Queue   │
+                    └──────────┘  └────┬─────┘
+                                       │ tenantId
                                        ▼
                                   ┌──────────┐
                                   │  Worker  │
+                                  │ Tenant RLS│
                                   └──────────┘
 ```
 
@@ -137,6 +141,7 @@ GitHub Actions validates the application by installing dependencies, generating 
 
 - PostgreSQL
 - Prisma ORM
+- PostgreSQL Row-Level Security (RLS)
 - Transaction-local tenant context
 - Redis
 - BullMQ
@@ -240,6 +245,8 @@ pnpm --filter @nexora/db exec prisma generate
 pnpm --filter @nexora/db exec prisma migrate dev
 ```
 
+This applies the tenant-isolation migration, including PostgreSQL RLS policies.
+
 ### 8. Start the development applications
 
 Use the configured pnpm development scripts for the web application, API, and worker.
@@ -276,6 +283,8 @@ pnpm exec playwright test
 
 For the Playwright suite, provide the test credentials expected by the E2E specs through `.env.test.local`. Keep that file local and untracked.
 
+For a database-level isolation check, connect to PostgreSQL using the application database role and verify that tenant-owned tables have RLS enabled and forced, then exercise tenant A/B reads and writes through the API. The policies are designed so a missing or incorrect tenant predicate cannot silently expose another tenant's rows.
+
 ---
 
 ## Database
@@ -293,6 +302,16 @@ pnpm --filter @nexora/db exec prisma migrate dev
 ```
 
 The data model includes tenants, users, memberships, projects, tasks, invitations, subscriptions, audit logs, and processed webhooks.
+
+Tenant-owned resources use PostgreSQL RLS with transaction-local context:
+
+```text
+app.tenant_id  → tenant-owned row policies
+app.user_id    → authentication membership lookup
+app.invite_token → public invite lookup
+```
+
+Tasks inherit tenant ownership through their parent project, so their RLS policy verifies the project's tenant before allowing access.
 
 ---
 
@@ -361,33 +380,44 @@ The CI pipeline currently focuses on reproducible installation, Prisma generatio
 
 ## Engineering Challenges & Problem Solving
 
+### Defense-in-depth tenant isolation
+
+A multi-tenant application should not depend on every future developer remembering to add the correct tenant predicate to every query. Nexora therefore combines application-level tenant checks with PostgreSQL Row-Level Security.
+
+The API establishes `app.tenant_id` inside a transaction. PostgreSQL policies then enforce that tenant-owned rows match the active context. `FORCE ROW LEVEL SECURITY` keeps the policies effective even for the table-owning database role.
+
+Authentication and public invite flows use narrowly scoped transaction-local `app.user_id` and `app.invite_token` contexts where tenant identity is not known yet. This allows those bootstrap operations to remain compatible with RLS without introducing a global connection-level tenant value.
+
 ### Maintaining tenant context safely
 
 A multi-tenant application must avoid relying on a mutable global tenant value when database connections are pooled. Nexora establishes tenant context inside a Prisma transaction, keeping that context scoped to the transaction that performs the tenant-aware work.
 
-This creates a clear boundary between **request authorization** and **database access**, while avoiding connection-pool context leaking between requests.
+### Protecting background jobs
+
+Queue consumers do not inherit HTTP request context. Nexora therefore places the `tenantId` directly in tenant-sensitive job payloads and establishes the same transaction-local database context inside the worker before reading tenant-owned data.
 
 ### Separating asynchronous work from HTTP requests
 
 Long-running or asynchronous work is routed through Redis and BullMQ instead of keeping the HTTP request responsible for background processing. A dedicated worker consumes queued jobs independently from the API process.
 
-This separation makes the system easier to scale and keeps request handling focused on synchronous application operations.
-
 ---
 
 ## Security Considerations
 
-Nexora uses multiple application-level controls:
+Nexora uses multiple application- and database-level controls:
 
 - JWT-based authentication
 - HttpOnly refresh-token cookie support
 - Workspace-level RBAC
 - Tenant-aware resource queries
+- PostgreSQL Row-Level Security
+- `FORCE ROW LEVEL SECURITY` on tenant-owned tables
 - Transaction-scoped tenant context
+- Explicit tenant context in queue jobs
 - Server-side Stripe secret handling
 - Local-secret and credential files excluded from version control
 
-The repository intentionally avoids claiming PostgreSQL Row-Level Security as an active enforcement layer until corresponding SQL policies and automated isolation tests are present in the migration history.
+The RLS migration covers `Membership`, `Project`, `Task`, `Invite`, `Subscription`, and `AuditLog`. The `Tenant`, `User`, and `ProcessedWebhook` tables are not tenant-scoped rows themselves and therefore are intentionally not covered by tenant RLS policies.
 
 ---
 
@@ -405,6 +435,7 @@ Implemented areas include:
 - Stripe billing
 - Redis and BullMQ background jobs
 - Transaction-local tenant context
+- PostgreSQL RLS defense-in-depth
 - Playwright E2E testing
 - GitHub Actions CI
 - Docker-based development infrastructure

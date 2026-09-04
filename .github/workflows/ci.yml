@@ -60,6 +60,9 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @nexora/db exec prisma generate
 
+      - name: Apply Prisma migrations
+        run: pnpm --filter @nexora/db exec prisma migrate deploy
+
       - name: Build API
         run: pnpm --filter @nexora/api build
 
@@ -68,3 +71,24 @@ jobs:
 
       - name: Build web
         run: pnpm --filter web build
+
+      - name: Create non-bypass application database role
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d nexora -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nexora_app') THEN
+              CREATE ROLE nexora_app LOGIN PASSWORD 'nexora_app' NOSUPERUSER NOBYPASSRLS;
+            END IF;
+          END
+          $$;
+          GRANT CONNECT ON DATABASE nexora TO nexora_app;
+          GRANT USAGE ON SCHEMA public TO nexora_app;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nexora_app;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexora_app;
+          SQL
+
+      - name: Verify PostgreSQL tenant isolation
+        env:
+          DATABASE_URL: postgresql://nexora_app:nexora_app@localhost:5432/nexora
+        run: pnpm --filter @nexora/api test:tenant-isolation
