@@ -40,12 +40,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
     /*
      * INVITED SIGNUP
      *
-     * If an inviteToken is supplied, the user joins the
-     * existing tenant instead of creating a new tenant.
+     * The invite token is the only tenant-discovery credential available
+     * before authentication. Put it in transaction-local context so the
+     * RLS policy permits exactly that invite row to be discovered.
      */
     if (inviteToken) {
       try {
         const result = await prisma.$transaction(async (tx: any) => {
+          await tx.$executeRaw`
+            SELECT set_config(
+              'app.invite_token',
+              ${inviteToken},
+              true
+            )
+          `;
+
           const invite = await tx.invite.findUnique({
             where: { token: inviteToken },
           });
@@ -65,6 +74,14 @@ export default async function authRoutes(fastify: FastifyInstance) {
           if (invite.email.toLowerCase() !== email) {
             throw new Error('INVITE_EMAIL_MISMATCH');
           }
+
+          await tx.$executeRaw`
+            SELECT set_config(
+              'app.tenant_id',
+              ${invite.tenantId},
+              true
+            )
+          `;
 
           const user = await tx.user.create({
             data: {
@@ -133,8 +150,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
     /*
      * NORMAL SIGNUP
      *
-     * No invite token -> create a new tenant and make
-     * the new user its OWNER.
+     * No invite token -> create a new tenant and make the new user its OWNER.
+     * The tenant is created first, then its id becomes the transaction-local
+     * RLS context before the membership row is created.
      */
     const slug = tenantName
       .toLowerCase()
@@ -147,6 +165,14 @@ export default async function authRoutes(fastify: FastifyInstance) {
           slug,
         },
       });
+
+      await tx.$executeRaw`
+        SELECT set_config(
+          'app.tenant_id',
+          ${tenant.id},
+          true
+        )
+      `;
 
       const user = await tx.user.create({
         data: {
@@ -181,9 +207,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
         .send({ error: 'email/password required' });
     }
 
+    // User is not tenant-owned, so it remains available before RLS context.
     const user = await prisma.user.findUnique({
       where: { email },
-      include: { memberships: true },
     });
 
     if (!user) {
@@ -200,7 +226,23 @@ export default async function authRoutes(fastify: FastifyInstance) {
         .send({ error: 'invalid credentials' });
     }
 
-    const primary = user.memberships[0];
+    // After credentials are verified, load only this user's memberships
+    // through the RLS bootstrap policy.
+    const memberships = await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRaw`
+        SELECT set_config(
+          'app.user_id',
+          ${user.id},
+          true
+        )
+      `;
+
+      return tx.membership.findMany({
+        where: { userId: user.id },
+      });
+    });
+
+    const primary = memberships[0];
 
     const payload = {
       userId: user.id,
@@ -238,7 +280,6 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
       const user = await prisma.user.findUnique({
         where: { id: data.userId },
-        include: { memberships: true },
       });
 
       if (!user) {
@@ -247,7 +288,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
           .send({ error: 'invalid refresh' });
       }
 
-      const primary = user.memberships[0];
+      const memberships = await prisma.$transaction(async (tx: any) => {
+        await tx.$executeRaw`
+          SELECT set_config(
+            'app.user_id',
+            ${user.id},
+            true
+          )
+        `;
+
+        return tx.membership.findMany({
+          where: { userId: user.id },
+        });
+      });
+
+      const primary = memberships[0];
 
       const payload = {
         userId: user.id,
