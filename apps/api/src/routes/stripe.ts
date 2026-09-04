@@ -1,10 +1,10 @@
 import { FastifyInstance } from 'fastify';
 import Stripe from 'stripe';
-import prisma from '@nexora/db/src';
+import { withTenant } from '../db';
 
 export default async function stripeRoutes(
   fastify: FastifyInstance
-){
+) {
   fastify.post(
     '/stripe/create-checkout-session',
     {
@@ -28,11 +28,6 @@ export default async function stripeRoutes(
         });
       }
 
-      console.log(
-        'STRIPE ROUTE KEY:',
-        stripeKey.slice(0, 12)
-      );
-
       const stripe = new Stripe(stripeKey);
 
       const body = request.body as {
@@ -47,9 +42,14 @@ export default async function stripeRoutes(
 
       const tenantId = request.auth!.tenantId as string;
 
-      const tenant = await prisma.tenant.findUnique({
-        where: { id: tenantId },
-      });
+      const tenant = await withTenant(
+        tenantId,
+        async (tx) => {
+          return tx.tenant.findUnique({
+            where: { id: tenantId },
+          });
+        }
+      );
 
       if (!tenant) {
         return reply.code(404).send({
