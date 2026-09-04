@@ -1,11 +1,16 @@
 -- Enable PostgreSQL row-level security for tenant-owned tables that are
 -- present in the migration history. The application sets app.tenant_id
--- inside the same Prisma transaction via withTenant().
+-- inside the same Prisma transaction via withTenant(). FORCE RLS is required
+-- because the Prisma database role normally owns these tables.
 
 ALTER TABLE "Membership" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Membership" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "Project" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Project" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "Task" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Task" FORCE ROW LEVEL SECURITY;
 ALTER TABLE "Invite" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Invite" FORCE ROW LEVEL SECURITY;
 
 -- Normal tenant-scoped access uses app.tenant_id. Authentication bootstrap
 -- may temporarily use app.user_id after the server has identified the user,
