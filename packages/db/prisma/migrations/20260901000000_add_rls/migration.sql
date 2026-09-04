@@ -1,2 +1,0 @@
--- Reserved migration kept immutable for migration history compatibility.
--- Tenant RLS enforcement is applied by the later 20260904180000_enforce_tenant_rls migration.
