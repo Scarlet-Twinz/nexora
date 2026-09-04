@@ -55,13 +55,31 @@ export default fp(async (fastify) => {
         let tenantId = payload.tenantId;
 
         if (payload.tenantId) {
-          const membership = await prisma.membership.findUnique({
-            where: {
-              tenantId_userId: {
-                tenantId: payload.tenantId,
-                userId: payload.userId,
+          const membership = await prisma.$transaction(async (tx: any) => {
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.user_id',
+                ${payload.userId},
+                true
+              )
+            `;
+
+            await tx.$executeRaw`
+              SELECT set_config(
+                'app.tenant_id',
+                ${payload.tenantId},
+                true
+              )
+            `;
+
+            return tx.membership.findUnique({
+              where: {
+                tenantId_userId: {
+                  tenantId: payload.tenantId,
+                  userId: payload.userId,
+                },
               },
-            },
+            });
           });
 
           if (!membership) {
