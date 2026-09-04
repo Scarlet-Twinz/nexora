@@ -1,6 +1,7 @@
 -- PostgreSQL Row-Level Security for tenant-owned data.
--- The API establishes app.tenant_id inside the same transaction via withTenant().
--- FORCE RLS ensures table owners do not silently bypass policies.
+-- app.tenant_id is set transaction-locally by the API before tenant-scoped work.
+-- app.user_id is set for authentication transactions that must resolve a user's memberships.
+-- app.invite_token is set for public invite transactions that must resolve one invite.
 
 CREATE OR REPLACE FUNCTION app_current_tenant_id()
 RETURNS TEXT
@@ -10,10 +11,31 @@ AS $$
   SELECT NULLIF(current_setting('app.tenant_id', true), '')
 $$;
 
+CREATE OR REPLACE FUNCTION app_current_user_id()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT NULLIF(current_setting('app.user_id', true), '')
+$$;
+
+CREATE OR REPLACE FUNCTION app_current_invite_token()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT NULLIF(current_setting('app.invite_token', true), '')
+$$;
+
+-- Memberships are visible either inside an established tenant context or
+-- during authentication for the current user.
 ALTER TABLE "Membership" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Membership" FORCE ROW LEVEL SECURITY;
 CREATE POLICY membership_tenant_isolation ON "Membership"
-  USING ("tenantId" = app_current_tenant_id())
+  USING (
+    "tenantId" = app_current_tenant_id()
+    OR "userId" = app_current_user_id()
+  )
   WITH CHECK ("tenantId" = app_current_tenant_id());
 
 ALTER TABLE "Project" ENABLE ROW LEVEL SECURITY;
@@ -22,10 +44,15 @@ CREATE POLICY project_tenant_isolation ON "Project"
   USING ("tenantId" = app_current_tenant_id())
   WITH CHECK ("tenantId" = app_current_tenant_id());
 
+-- Invites are tenant-scoped once a tenant is known. The public invite flow
+-- may resolve exactly one invite by the transaction-local invite token.
 ALTER TABLE "Invite" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Invite" FORCE ROW LEVEL SECURITY;
 CREATE POLICY invite_tenant_isolation ON "Invite"
-  USING ("tenantId" = app_current_tenant_id())
+  USING (
+    "tenantId" = app_current_tenant_id()
+    OR "token" = app_current_invite_token()
+  )
   WITH CHECK ("tenantId" = app_current_tenant_id());
 
 ALTER TABLE "Subscription" ENABLE ROW LEVEL SECURITY;
@@ -40,7 +67,7 @@ CREATE POLICY audit_log_tenant_isolation ON "AuditLog"
   USING ("tenantId" = app_current_tenant_id())
   WITH CHECK ("tenantId" = app_current_tenant_id());
 
--- Tasks inherit tenant ownership through Project.
+-- Tasks inherit tenant ownership through their parent Project.
 ALTER TABLE "Task" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Task" FORCE ROW LEVEL SECURITY;
 CREATE POLICY task_tenant_isolation ON "Task"
