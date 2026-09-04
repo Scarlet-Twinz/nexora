@@ -21,7 +21,7 @@ Nexora provides isolated workspaces where users can:
 - Authenticate with JWT
 - Manage Pro subscriptions through Stripe
 - Process asynchronous work with Redis and BullMQ
-- Apply tenant-aware database access through transaction-local tenant context
+- Enforce tenant-aware database access with PostgreSQL Row-Level Security
 - Run browser-level tests with Playwright
 
 The codebase is organized as a **pnpm monorepo** with dedicated web, API, worker, and database packages.
@@ -30,14 +30,14 @@ The codebase is organized as a **pnpm monorepo** with dedicated web, API, worker
 
 Nexora is designed around several problems that appear in real SaaS systems:
 
-- **Multi-tenancy:** tenant identity is carried through application operations rather than relying only on client-side filtering.
+- **Multi-tenancy:** tenant identity is carried through application operations and enforced again at the database layer for tenant-owned tables.
 - **Authorization:** authentication and workspace-level RBAC are separate concerns from resource access.
-- **Background processing:** asynchronous work is separated from HTTP request handling through Redis and BullMQ.
-- **Database safety:** tenant context is established inside a database transaction so it is scoped to the transaction rather than leaking across pooled connections.
+- **Background processing:** asynchronous work is separated from HTTP request handling through Redis and BullMQ, with tenant context propagated into tenant-scoped jobs.
+- **Database safety:** tenant context is established inside a transaction and PostgreSQL RLS policies use that transaction-local context to prevent cross-tenant access.
 - **Verification:** critical user flows are exercised with browser-level Playwright tests.
-- **Delivery:** GitHub Actions provides repeatable dependency installation, Prisma generation, and application builds.
+- **Delivery:** GitHub Actions applies Prisma migrations, generates the client, and builds the API, worker, and web application.
 
-> **Security note:** the repository contains the transaction-local tenant-context foundation for database isolation. PostgreSQL RLS policies are not documented as active until they are present in the migration history and covered by tests.
+> **Security note:** PostgreSQL RLS is implemented for the tenant-owned tables represented in the migration history. RLS is forced for those tables so the database role owning the tables does not bypass the policies. Public invite acceptance uses a transaction-local invite-token context before the tenant is known, and authentication bootstrap can load only the identified user's memberships.
 
 ## Features
 
@@ -53,7 +53,7 @@ Nexora is designed around several problems that appear in real SaaS systems:
 
 ### Multi-Tenancy
 
-Each workspace represents a tenant. Users belong to tenants through memberships, and tenant-aware operations restrict access to workspace-owned resources.
+Each workspace represents a tenant. Users belong to tenants through memberships, and tenant-aware operations restrict access to workspace-owned resources at both the application and PostgreSQL RLS layers.
 
 ### Projects & Tasks
 
@@ -61,7 +61,7 @@ Users can create, view, update, and delete projects and tasks while maintaining 
 
 ### Team Invitations
 
-Workspace members with appropriate permissions can invite users using expiring invitation tokens and role assignment.
+Workspace members with appropriate permissions can invite users using expiring invitation tokens and role assignment. Invitation jobs carry tenant context into the worker so RLS remains effective across the asynchronous boundary.
 
 ### Stripe Billing
 
@@ -73,6 +73,8 @@ Redis and BullMQ handle asynchronous processing through a dedicated worker:
 
 ```text
 API → Redis → BullMQ → Worker
+                 │
+                 └── tenantId → transaction-local RLS context
 ```
 
 ### End-to-End Testing
@@ -81,7 +83,7 @@ Playwright provides browser-level coverage for core application flows including 
 
 ### Continuous Integration
 
-GitHub Actions validates the application by installing dependencies, generating Prisma Client, and building the API, worker, and web application.
+GitHub Actions validates the application by applying Prisma migrations, generating Prisma Client, and building the API, worker, and web application.
 
 ---
 
@@ -105,12 +107,13 @@ GitHub Actions validates the application by installing dependencies, generating 
                             ▼        ▼
                     ┌──────────┐  ┌──────────┐
                     │PostgreSQL│  │  Redis   │
-                    │  Tenant  │  │  Queue   │
-                    │  Context │  └────┬─────┘
+                    │ RLS +    │  │  Queue   │
+                    │ Tenant   │  └────┬─────┘
                     └──────────┘       │
                                        ▼
                                   ┌──────────┐
                                   │  Worker  │
+                                  │Tenant RLS│
                                   └──────────┘
 ```
 
@@ -137,6 +140,7 @@ GitHub Actions validates the application by installing dependencies, generating 
 
 - PostgreSQL
 - Prisma ORM
+- PostgreSQL Row-Level Security
 - Transaction-local tenant context
 - Redis
 - BullMQ
@@ -228,19 +232,14 @@ NEXT_PUBLIC_STRIPE_PRICE_PRO=your-stripe-price-id
 
 Never commit real secrets, credentials, cookies, or local test environment files.
 
-### 6. Generate Prisma Client
-
-```bash
-pnpm --filter @nexora/db exec prisma generate
-```
-
-### 7. Run migrations
+### 6. Apply migrations and generate Prisma Client
 
 ```bash
 pnpm --filter @nexora/db exec prisma migrate dev
+pnpm --filter @nexora/db exec prisma generate
 ```
 
-### 8. Start the development applications
+### 7. Start the development applications
 
 Use the configured pnpm development scripts for the web application, API, and worker.
 
@@ -264,11 +263,11 @@ After setup, verify the system in this order:
 # Infrastructure health
 docker compose -f docker-compose.dev.yml ps
 
-# Prisma client
-pnpm --filter @nexora/db exec prisma generate
-
 # Database migrations
 pnpm --filter @nexora/db exec prisma migrate dev
+
+# Prisma client
+pnpm --filter @nexora/db exec prisma generate
 
 # Browser-level verification
 pnpm exec playwright test
@@ -292,7 +291,7 @@ Create and apply a development migration:
 pnpm --filter @nexora/db exec prisma migrate dev
 ```
 
-The data model includes tenants, users, memberships, projects, tasks, invitations, subscriptions, audit logs, and processed webhooks.
+The migration history now covers the Prisma models for tenants, users, memberships, projects, tasks, invitations, subscriptions, audit logs, and processed webhooks. Tenant-owned tables are protected by PostgreSQL RLS where tenant identity exists in the schema.
 
 ---
 
@@ -349,45 +348,55 @@ Git Push / Pull Request
           ├── PostgreSQL
           ├── Redis
           ├── pnpm install
+          ├── Prisma migrate deploy
           ├── Prisma generate
           ├── API build
           ├── Worker build
           └── Web build
 ```
 
-The CI pipeline currently focuses on reproducible installation, Prisma generation, and application builds. Browser E2E execution remains a separate verification step.
+The CI pipeline validates the migration history as well as application builds, so broken database migrations fail CI instead of being discovered later during deployment.
 
 ---
 
 ## Engineering Challenges & Problem Solving
 
-### Maintaining tenant context safely
+### Enforcing tenant boundaries at the database layer
 
-A multi-tenant application must avoid relying on a mutable global tenant value when database connections are pooled. Nexora establishes tenant context inside a Prisma transaction, keeping that context scoped to the transaction that performs the tenant-aware work.
+A multi-tenant application must avoid relying only on client-side or ORM-level filtering. Nexora establishes tenant context inside a Prisma transaction and PostgreSQL RLS policies enforce that context for tenant-owned tables.
 
-This creates a clear boundary between **request authorization** and **database access**, while avoiding connection-pool context leaking between requests.
+The RLS migration also uses `FORCE ROW LEVEL SECURITY`, preventing the table-owning database role from silently bypassing the policies.
+
+### Maintaining isolation across authentication and invitations
+
+Authentication needs to discover a user's memberships before a tenant context is available, while public invite acceptance needs to discover a tenant from an invite token. Nexora handles these bootstrap paths with narrowly scoped transaction-local contexts (`app.user_id` and `app.invite_token`) before switching to `app.tenant_id`.
+
+### Maintaining isolation across asynchronous work
+
+Tenant context cannot be assumed to survive an HTTP request. Invite jobs therefore carry `tenantId` explicitly, and the worker establishes a fresh transaction-local tenant context before reading tenant-owned data.
 
 ### Separating asynchronous work from HTTP requests
 
 Long-running or asynchronous work is routed through Redis and BullMQ instead of keeping the HTTP request responsible for background processing. A dedicated worker consumes queued jobs independently from the API process.
 
-This separation makes the system easier to scale and keeps request handling focused on synchronous application operations.
-
 ---
 
 ## Security Considerations
 
-Nexora uses multiple application-level controls:
+Nexora uses multiple application and database controls:
 
 - JWT-based authentication
 - HttpOnly refresh-token cookie support
 - Workspace-level RBAC
 - Tenant-aware resource queries
+- PostgreSQL Row-Level Security
+- `FORCE ROW LEVEL SECURITY` on protected tables
 - Transaction-scoped tenant context
+- Tenant context propagation into background jobs
 - Server-side Stripe secret handling
 - Local-secret and credential files excluded from version control
 
-The repository intentionally avoids claiming PostgreSQL Row-Level Security as an active enforcement layer until corresponding SQL policies and automated isolation tests are present in the migration history.
+The RLS migration is deliberately limited to tables that exist in the committed migration history, while schema/migration synchronization migrations keep the Prisma model and database structure aligned.
 
 ---
 
@@ -405,8 +414,9 @@ Implemented areas include:
 - Stripe billing
 - Redis and BullMQ background jobs
 - Transaction-local tenant context
+- PostgreSQL RLS for tenant-owned data
 - Playwright E2E testing
-- GitHub Actions CI
+- GitHub Actions CI with migration validation
 - Docker-based development infrastructure
 
 A public hosted URL is not currently provided. Follow the local development instructions to run the application.
