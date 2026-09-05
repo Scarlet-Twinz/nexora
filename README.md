@@ -6,6 +6,10 @@ Nexora is a full-stack project-management platform built around multi-tenant Saa
 
 > **Local-first portfolio project:** Nexora does not currently have a public hosted URL. The repository is documented so another developer can clone it, configure the local environment, start the infrastructure, and run the web/API/worker stack locally.
 
+## Product Preview
+
+A conceptual view of Nexora as a multi-tenant SaaS workspace: a clean project-management interface where teams can move between workspaces, manage projects and tasks, collaborate with members, and access organization-level controls. The presentation emphasizes **workspace isolation, permissions, project execution, and subscription-aware SaaS operations**.
+
 ## Features
 
 - Multi-tenant workspaces
