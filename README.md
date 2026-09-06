@@ -4,8 +4,6 @@
 
 Nexora is a full-stack project-management platform built around multi-tenant SaaS architecture. It combines workspace isolation, JWT authentication, RBAC, PostgreSQL Row-Level Security, Redis/BullMQ background jobs, Stripe billing, Playwright E2E tests, and GitHub Actions CI in a pnpm monorepo.
 
-> **Local-first portfolio project:** Nexora does not currently have a public hosted URL. The repository is documented so another developer can clone it, configure the local environment, start the infrastructure, and run the web/API/worker stack locally.
-
 ## Product Preview
 
 A conceptual view of Nexora as a multi-tenant SaaS workspace: a clean project-management interface where teams can move between workspaces, manage projects and tasks, collaborate with members, and access organization-level controls. The presentation emphasizes **workspace isolation, permissions, project execution, and subscription-aware SaaS operations**.
@@ -287,12 +285,12 @@ GitHub Actions
 
 ## Engineering Focus
 
-Nexora is intentionally more than a basic CRUD application. The main engineering problems are:
+Nexora focuses on the engineering boundaries required by a multi-tenant SaaS system:
 
-- enforcing tenant boundaries beyond ORM query conventions;
+- enforcing tenant boundaries at the database and application layers;
 - keeping authorization separate from authentication;
 - carrying tenant context across asynchronous queue boundaries;
-- handling authentication/invitation bootstrap before a tenant is known;
+- handling authentication and invitation bootstrap before a tenant is known;
 - keeping schema and migration history synchronized;
 - validating the repository through automated builds and browser tests.
 
@@ -302,7 +300,7 @@ Nexora is intentionally more than a basic CRUD application. The main engineering
 
 Implemented areas include authentication, multi-tenancy, RBAC, projects/tasks, invitations, Stripe billing, Redis/BullMQ jobs, PostgreSQL RLS, Docker development infrastructure, Playwright E2E coverage, and CI build/migration validation.
 
-There is currently no public hosted URL. The intended way to evaluate the application is to clone the repository and follow the Quick Start instructions above.
+The application is currently run locally from the repository using the Quick Start instructions above.
 
 ## Security
 
@@ -319,7 +317,7 @@ Use the committed `.env.example` files as templates for local configuration.
 
 ## License
 
-This project is available for educational and portfolio purposes.
+MIT
 
 ## Author
 
