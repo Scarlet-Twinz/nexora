@@ -325,4 +325,4 @@ MIT
 
 Full-stack developer focused on frontend engineering, backend systems, APIs, realtime applications, automation, databases, and practical software architecture.
 
-**GitHub:** https://github.com/Scarlet-Twinz
+**GitHub Repository:** https://github.com/Scarlet-Twinz/nexora
