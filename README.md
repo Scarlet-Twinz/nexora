@@ -1,14 +1,38 @@
-# Nexora
+# NEXORA
 
-**Multi-Tenant SaaS Workplace**
+**Multi-tenant SaaS workplace built around explicit tenant isolation.**
 
-Nexora is a full-stack project-management platform built around multi-tenant SaaS architecture. It combines workspace isolation, JWT authentication, RBAC, PostgreSQL Row-Level Security, Redis/BullMQ background jobs, Stripe billing, Playwright E2E tests, and GitHub Actions CI in a pnpm monorepo.
+NEXORA is a full-stack project-management platform designed to demonstrate the boundaries that make a multi-tenant SaaS system safe and operable: authentication, authorization, PostgreSQL Row-Level Security, transaction-local tenant context, asynchronous workers, billing, browser testing, and CI validation.
 
-## Product Preview
+## Why This Project Matters
 
-A conceptual view of Nexora as a multi-tenant SaaS workspace: a clean project-management interface where teams can move between workspaces, manage projects and tasks, collaborate with members, and access organization-level controls. The presentation emphasizes **workspace isolation, permissions, project execution, and subscription-aware SaaS operations**.
+The interesting part of NEXORA is not the task board. It is the **tenant boundary**.
 
-## Features
+A request must carry enough authenticated context for the API to establish the current workspace, while PostgreSQL independently enforces which tenant-owned rows may be accessed. That same tenant identity is propagated into background jobs instead of disappearing at the queue boundary.
+
+```text
+User
+ │
+ ▼
+Next.js
+ │ JWT
+ ▼
+Fastify API
+ │
+ ├── auth / RBAC
+ ├── tenant context
+ └── domain operations
+        │
+        ├──────────────► Redis / BullMQ ───► Worker
+        │                                      │
+        │                                  tenantId
+        ▼                                      │
+     Prisma ───────────────────────────────► PostgreSQL
+                                                │
+                                           PostgreSQL RLS
+```
+
+## Core Features
 
 - Multi-tenant workspaces
 - JWT authentication with refresh-token cookies
@@ -17,27 +41,44 @@ A conceptual view of Nexora as a multi-tenant SaaS workspace: a clean project-ma
 - Team invitations
 - PostgreSQL RLS with `FORCE ROW LEVEL SECURITY`
 - Transaction-local tenant context
-- Redis + BullMQ background jobs
 - Tenant context propagation into workers
+- Redis + BullMQ background processing
 - Stripe Checkout billing integration
 - Next.js web application
 - Fastify API
 - Prisma/PostgreSQL data layer
 - Playwright browser tests
-- GitHub Actions CI with migration validation
 - Docker Compose development infrastructure
+- GitHub Actions CI with migration/build validation
+
+## Tenant Isolation Model
+
+NEXORA protects tenant-owned resources at more than one layer.
+
+1. The authenticated request establishes the tenant context.
+2. Database operations run inside a transaction with that context available to PostgreSQL.
+3. Row-Level Security policies restrict tenant-owned rows.
+4. `FORCE ROW LEVEL SECURITY` prevents the table-owning role from silently bypassing those policies.
+5. Public invite/auth bootstrap paths use narrowly scoped contexts before a tenant is known.
+6. BullMQ jobs carry `tenantId` explicitly and establish a fresh transaction context in the worker.
+
+This makes tenant isolation part of the data-access model rather than only an application convention.
 
 ## Architecture
 
 ```text
 Next.js Web
+    │
     │ HTTP / JWT
     ▼
-Fastify API ───────► Redis / BullMQ ───────► Worker
-    │                                      │
-    ▼                                      │ tenant context
-Prisma ───────────► PostgreSQL ◄───────────┘
-                     RLS
+Fastify API
+    │
+    ├──────────────► Redis / BullMQ ─────────► Worker
+    │                                               │
+    │                                               │ tenant context
+    ▼                                               ▼
+Prisma ───────────────────────────────────────► PostgreSQL
+                                                  RLS + FORCE RLS
 ```
 
 ## Tech Stack
@@ -49,11 +90,11 @@ Prisma ───────────► PostgreSQL ◄───────�
 | Database | PostgreSQL, Prisma 6 |
 | Multi-tenancy | PostgreSQL RLS, transaction-local context |
 | Background jobs | Redis, BullMQ, dedicated worker |
-| Billing | Stripe |
+| Billing | Stripe Checkout |
 | Testing | Playwright |
 | Infrastructure | Docker Compose |
 | CI | GitHub Actions |
-| Package manager | pnpm |
+| Workspace | pnpm monorepo |
 
 ## Repository Structure
 
@@ -61,238 +102,87 @@ Prisma ───────────► PostgreSQL ◄───────�
 nexora/
 ├── apps/
 │   ├── api/       # Fastify API
-│   ├── web/       # Next.js frontend
+│   ├── web/       # Next.js application
 │   └── worker/    # BullMQ worker
 ├── packages/
 │   └── db/        # Prisma schema and migrations
 ├── tests/
-│   └── e2e/       # Playwright tests
-├── .github/
-│   └── workflows/
+│   └── e2e/       # Playwright coverage
+├── .github/workflows/
 ├── docker-compose.dev.yml
-├── .env.example
 ├── package.json
-├── pnpm-workspace.yaml
-└── playwright.config.ts
+└── pnpm-workspace.yaml
 ```
 
-## Quick Start
+## Getting Started
 
 ### Prerequisites
-
-Install:
 
 - Node.js 20+
 - pnpm 11+
 - Docker Desktop with Docker Compose
 
-Verify:
-
-```bash
-node --version
-pnpm --version
-docker --version
-```
-
-### 1. Clone
-
 ```bash
 git clone https://github.com/Scarlet-Twinz/nexora.git
 cd nexora
-```
-
-### 2. Install dependencies
-
-```bash
 pnpm install
-```
-
-### 3. Start PostgreSQL and Redis
-
-```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-The development stack exposes:
-
-```text
-PostgreSQL → localhost:5433
-Redis      → localhost:6379
-```
-
-### 4. Configure environment files
-
-The monorepo runs each application from its own package directory, so the environment examples are provided next to the services that consume them.
-
-**Database:**
-
-```bash
-# macOS/Linux
-cp packages/db/.env.example packages/db/.env
-```
-
-**API:**
-
-```bash
-# macOS/Linux
-cp apps/api/.env.example apps/api/.env
-```
-
-**Worker:**
-
-```bash
-# macOS/Linux
-cp apps/worker/.env.example apps/worker/.env
-```
-
-**Web:**
-
-```bash
-# macOS/Linux
-cp apps/web/.env.example apps/web/.env.local
-```
-
-On Windows PowerShell, use:
-
-```powershell
-Copy-Item packages/db/.env.example packages/db/.env
-Copy-Item apps/api/.env.example apps/api/.env
-Copy-Item apps/worker/.env.example apps/worker/.env
-Copy-Item apps/web/.env.example apps/web/.env.local
-```
-
-The committed examples contain local development values and placeholders only. Do not add real credentials or secrets to Git.
-
-### 5. Apply database migrations
+Configure the service-specific `.env` files from the committed examples, then apply migrations:
 
 ```bash
 pnpm --filter @nexora/db exec prisma migrate dev
 pnpm --filter @nexora/db exec prisma generate
 ```
 
-### 6. Start the application
-
-From the repository root:
+Start the monorepo:
 
 ```bash
 pnpm dev
 ```
 
-This starts the workspace development processes through Turborepo.
-
-Open:
+Default development endpoints:
 
 ```text
-Frontend → http://localhost:3000
-API      → http://localhost:4000
-Health   → http://localhost:4000/health
+Web    → http://localhost:3000
+API    → http://localhost:4000
+Health → http://localhost:4000/health
 ```
 
-If you prefer separate terminals:
+## Testing & CI
 
-```bash
-pnpm --filter @nexora/api dev
-pnpm --filter @nexora/worker dev
-pnpm --filter web dev
-```
-
-## Environment Variables
-
-### Database
-
-`packages/db/.env`:
-
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/nexora_dev
-```
-
-### API
-
-`apps/api/.env`:
-
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/nexora_dev
-REDIS_URL=redis://localhost:6379
-JWT_SECRET=change-this-to-a-long-local-secret
-STRIPE_SECRET_KEY=sk_test_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-FRONTEND_URL=http://localhost:3000
-```
-
-Stripe variables are only needed for billing/webhook flows. Use Stripe test-mode credentials.
-
-### Worker
-
-`apps/worker/.env` contains the database/Redis settings plus optional SMTP configuration. SMTP is not required for local invitation testing; without SMTP credentials the worker logs the generated invitation link.
-
-### Web
-
-`apps/web/.env.local`:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:4000
-```
-
-## Database & Tenant Isolation
-
-Tenant-owned resources are protected at both the application and database layers. The API establishes transaction-local tenant context before tenant-sensitive operations, while PostgreSQL RLS policies enforce the tenant boundary.
-
-Authentication and public invite acceptance use narrowly scoped bootstrap contexts (`app.user_id` and `app.invite_token`) before switching to `app.tenant_id`. Background jobs explicitly carry `tenantId` and establish a fresh transaction-local context in the worker.
-
-`FORCE ROW LEVEL SECURITY` is enabled on protected tenant-owned tables so the table-owning database role does not bypass the policies.
-
-## Testing
-
-Run the Playwright suite:
+Browser tests:
 
 ```bash
 pnpm exec playwright test
 ```
 
-Core browser coverage includes authentication, project creation, and task creation/visibility.
-
-## Build
-
-```bash
-pnpm --filter @nexora/api build
-pnpm --filter @nexora/worker build
-pnpm --filter web build
-```
-
-Or build the complete monorepo:
+Build:
 
 ```bash
 pnpm build
 ```
 
-## CI
+GitHub Actions validates dependency installation, PostgreSQL startup, Prisma migrations/generation, and builds for the API, worker, and web application.
 
-GitHub Actions validates the repository by installing dependencies, applying Prisma migrations, generating Prisma Client, and building the API, worker, and web application.
+## Engineering Decisions
 
-```text
-Push / Pull Request
-       │
-       ▼
-GitHub Actions
-       ├── Install
-       ├── PostgreSQL
-       ├── Prisma migrate deploy
-       ├── Prisma generate
-       ├── API build
-       ├── Worker build
-       └── Web build
-```
+### Database-enforced isolation
 
-## Engineering Focus
+Application authorization is reinforced by PostgreSQL RLS rather than relying on every query author to remember a `tenant_id` filter.
 
-Nexora focuses on the engineering boundaries required by a multi-tenant SaaS system:
+### Async boundary preservation
 
-- enforcing tenant boundaries at the database and application layers;
-- keeping authorization separate from authentication;
-- carrying tenant context across asynchronous queue boundaries;
-- handling authentication and invitation bootstrap before a tenant is known;
-- keeping schema and migration history synchronized;
-- validating the repository through automated builds and browser tests.
+Workers receive the tenant identity as job data and establish their own database context. Tenant isolation therefore survives asynchronous execution.
+
+### Bootstrap contexts
+
+Authentication and invitation acceptance happen before a normal tenant context exists. These paths use deliberately scoped bootstrap context instead of weakening the normal tenant boundary.
+
+### Migration discipline
+
+Schema state is represented through Prisma migrations and validated in CI, reducing the risk that local development silently depends on an untracked database shape.
 
 ## Current Status
 
@@ -300,20 +190,11 @@ Nexora focuses on the engineering boundaries required by a multi-tenant SaaS sys
 
 Implemented areas include authentication, multi-tenancy, RBAC, projects/tasks, invitations, Stripe billing, Redis/BullMQ jobs, PostgreSQL RLS, Docker development infrastructure, Playwright E2E coverage, and CI build/migration validation.
 
-The application is currently run locally from the repository using the Quick Start instructions above.
+The application is currently run locally from the repository.
 
 ## Security
 
-Never commit:
-
-- `.env` files
-- passwords
-- JWTs or refresh tokens
-- Stripe secrets
-- SMTP passwords
-- cookies or browser session files
-
-Use the committed `.env.example` files as templates for local configuration.
+Never commit `.env` files, passwords, JWTs, refresh tokens, Stripe secrets, SMTP passwords, or browser session data. Use the committed environment templates for local configuration.
 
 ## License
 
@@ -323,6 +204,4 @@ MIT
 
 **Anthony Emmanuella Mmasinachi**
 
-Full-stack developer focused on frontend engineering, backend systems, APIs, realtime applications, automation, databases, and practical software architecture.
-
-**GitHub Repository:** https://github.com/Scarlet-Twinz/nexora
+Full-stack and systems engineer focused on SaaS architecture, backend systems, databases, distributed processing, networking, AI integration, and practical software engineering.
