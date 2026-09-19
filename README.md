@@ -205,3 +205,9 @@ MIT
 **Anthony Emmanuella Mmasinachi**
 
 Full-stack and systems engineer focused on SaaS architecture, backend systems, databases, distributed processing, networking, AI integration, and practical software engineering.
+
+## Project Links
+
+- **Repository:** https://github.com/Scarlet-Twinz/nexora
+- **Author:** Anthony Emmanuella Mmasinachi
+- **GitHub:** https://github.com/Scarlet-Twinz
