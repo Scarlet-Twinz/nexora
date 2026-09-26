@@ -1,4 +1,4 @@
-# NEXORA
+#  NEXORA
 
 **Multi-tenant SaaS workplace built around explicit tenant isolation.**
 
