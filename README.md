@@ -196,16 +196,6 @@ The application is currently run locally from the repository.
 
 Never commit `.env` files, passwords, JWTs, refresh tokens, Stripe secrets, SMTP passwords, or browser session data. Use the committed environment templates for local configuration.
 
-## License
-
-MIT
-
-
-The project is documented as a systems-focused SaaS implementation, with the tenant-isolation model and local verification path exposed for review.
-
-
-The project is documented as a systems-focused SaaS implementation, with the tenant-isolation model and local verification path exposed for review.
-
 ## Author
 
 **Anthony Emmanuella Mmasinachi**
@@ -217,3 +207,7 @@ Full-stack and systems engineer focused on SaaS architecture, backend systems, d
 - **Repository:** https://github.com/Scarlet-Twinz/nexora
 - **Author:** Anthony Emmanuella Mmasinachi
 - **GitHub:** https://github.com/Scarlet-Twinz
+
+## License
+
+MIT
