@@ -203,6 +203,9 @@ MIT
 
 The project is documented as a systems-focused SaaS implementation, with the tenant-isolation model and local verification path exposed for review.
 
+
+The project is documented as a systems-focused SaaS implementation, with the tenant-isolation model and local verification path exposed for review.
+
 ## Author
 
 **Anthony Emmanuella Mmasinachi**
