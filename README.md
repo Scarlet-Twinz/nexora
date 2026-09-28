@@ -208,6 +208,9 @@ Full-stack and systems engineer focused on SaaS architecture, backend systems, d
 - **Author:** Anthony Emmanuella Mmasinachi
 - **GitHub:** https://github.com/Scarlet-Twinz
 
+
 ## License
 
-MIT
+MIT License.
+
+See [LICENSE](LICENSE) for the full license text.
