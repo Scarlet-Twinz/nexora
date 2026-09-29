@@ -23,7 +23,7 @@ const fastify = Fastify({ logger: true });
 
 // CORS
 fastify.register(fastifyCors, {
-  origin: 'http://localhost:3000',
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
 });
 
@@ -49,11 +49,11 @@ fastify.get('/health', async () => ({
 const start = async () => {
   try {
     await fastify.listen({
-      port: 4000,
+      port: Number(process.env.PORT) || 4000,
       host: '0.0.0.0',
     });
 
-    console.log('API listening on 4000');
+    console.log('API listening');
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
