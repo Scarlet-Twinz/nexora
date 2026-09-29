@@ -113,11 +113,27 @@ export default async function authRoutes(fastify: FastifyInstance) {
           };
         });
 
+        const access = signAccess({
+          userId: result.userId,
+          tenantId: result.tenantId,
+          role: result.role,
+          email,
+        });
+        const refresh = signRefresh({ userId: result.userId });
+        reply.setCookie('refreshToken', refresh, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 60 * 60 * 24 * 30,
+        });
+
         return reply.code(201).send({
           userId: result.userId,
           tenantId: result.tenantId,
           role: result.role,
           joined: true,
+          access,
         });
       } catch (error: any) {
         switch (error?.message) {
@@ -191,9 +207,26 @@ export default async function authRoutes(fastify: FastifyInstance) {
       return { tenant, user };
     });
 
+    const access = signAccess({
+      userId: result.user.id,
+      tenantId: result.tenant.id,
+      role: 'OWNER',
+      email,
+    });
+    const refresh = signRefresh({ userId: result.user.id });
+    reply.setCookie('refreshToken', refresh, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30,
+    });
+
     return reply.code(201).send({
       tenantId: result.tenant.id,
       userId: result.user.id,
+      role: 'OWNER',
+      access,
     });
   });
 
