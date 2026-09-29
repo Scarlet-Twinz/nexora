@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'node:crypto';
 import { Queue } from 'bullmq';
 import prisma from '@nexora/db/src';
 import { withTenant } from '../db';
@@ -72,7 +72,7 @@ export default async function inviteRoutes(
             };
           }
 
-          const token = nanoid(32);
+          const token = randomBytes(24).toString('base64url');
 
           const expiresAt = new Date(
             Date.now() +
