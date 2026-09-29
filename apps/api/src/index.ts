@@ -6,6 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // NOTE: Do NOT log secrets or secret fragments
+// Vercel entrypoint: Fastify zero-configuration deployment.
 
 import Fastify from 'fastify';
 import fastifyCookie from '@fastify/cookie';
