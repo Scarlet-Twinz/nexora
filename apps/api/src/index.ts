@@ -22,9 +22,15 @@ import healthJobs from './routes/health-jobs';
 
 const fastify = Fastify({ logger: true });
 
+const frontendOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'https://nexora1-nine.vercel.app',
+  'https://nexora1-scalet-twinz-s-projects.vercel.app',
+];
+
 // CORS
 fastify.register(fastifyCors, {
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: frontendOrigins,
   credentials: true,
 });
 
