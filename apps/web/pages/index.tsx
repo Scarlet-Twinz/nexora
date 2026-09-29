@@ -7,7 +7,7 @@ export default function Home() {
         <div className="text-center">
           <p className="text-sm font-semibold uppercase tracking-widest text-blue-600">Nexora</p>
           <h1 className="mt-4 text-4xl font-bold tracking-tight text-gray-900 sm:text-5xl">
-            Projects, teams, and work in one place.
+            Projects, teams, and your work in one place.
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-gray-600">
             Manage projects and collaborate with your team from a single workspace.
