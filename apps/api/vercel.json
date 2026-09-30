@@ -1,0 +1,3 @@
+{
+  "buildCommand": "pnpm --filter @nexora/db exec prisma migrate deploy && pnpm --filter @nexora/api build"
+}
