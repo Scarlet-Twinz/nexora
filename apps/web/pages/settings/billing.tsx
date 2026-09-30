@@ -1,18 +1,19 @@
 import { useState } from 'react';
 import api from '../../src/lib/api';
 
+const PRO_PRICE_ID =
+  process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO ||
+  'price_1ULPqu8Xp6enWnFVyEhh2f5L';
+
 export default function Billing() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const priceId =
-    process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO || '';
+  const priceId = PRO_PRICE_ID;
 
   const upgrade = async () => {
     if (!priceId) {
-      setError(
-        'Stripe price is not configured. Set NEXT_PUBLIC_STRIPE_PRICE_PRO.'
-      );
+      setError('Stripe Pro price is not configured.');
       return;
     }
 
