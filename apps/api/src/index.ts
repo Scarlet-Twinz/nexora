@@ -26,11 +26,26 @@ const frontendOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'https://nexora1-nine.vercel.app',
   'https://nexora1-scalet-twinz-s-projects.vercel.app',
+  'https://nexora1-iopljvzn7-scalet-twinz-s-projects.vercel.app',
+  'https://nexora1-git-scarlet-twinz-nexora-4e512e-scalet-twinz-s-projects.vercel.app',
 ];
 
 // CORS
+// Keep explicit known origins, while allowing preview URLs generated for this
+// Nexora Vercel project. Credentials remain enabled; wildcard "*" is not used.
 fastify.register(fastifyCors, {
-  origin: frontendOrigins,
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const isKnownOrigin = frontendOrigins.includes(origin);
+    const isNexoraPreview =
+      /^https:\/\/nexora1-[a-z0-9-]+-scalet-twinz-s-projects\.vercel\.app$/.test(origin);
+
+    callback(null, isKnownOrigin || isNexoraPreview);
+  },
   credentials: true,
 });
 
