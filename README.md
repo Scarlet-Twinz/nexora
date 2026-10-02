@@ -184,6 +184,8 @@ Authentication and invitation acceptance happen before a normal tenant context e
 
 Schema state is represented through Prisma migrations and validated in CI, reducing the risk that local development silently depends on an untracked database shape.
 
+Production migrations are not run by the Vercel API build. Before applying a migration, verify the target database and review the pending migration SQL; run it as an explicit release step rather than as part of a build or preview deployment.
+
 ## Current Status
 
 **Functional full-stack SaaS project.**
